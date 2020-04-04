@@ -2,6 +2,8 @@
 
 Nuke Gizmo for supervising shots.
 
+In this repository you can found built gizmo in folder **built**.
+
 # Usage
 ### [Video Tutorial](https://youtu.be/z18xjO2nJfg)
 
@@ -29,7 +31,6 @@ nuke.menu('Viewer').items()[1].action().setChecked(True)
 
 3. Restart Nuke
 
-
 # Save from source
 
 If you have an older or newer version you can save gizmo for your version youself.
@@ -52,23 +53,12 @@ Now new script is created from sources and saved to .../nuke_bricker/dist
 
 4. Open script .../nuke_bricker/dist/bricker_gizmo.nk in Nuke
 
-5. Open Control Panel of bricker node, go to tab *Node* and press __export as gizmo...__.
+5. Open **Control Panel** of bricker node, go to tab **Node** and press **export as gizmo...**.
 Select path to some NUKE_PATH location and press *Save*.
 
-New version of gizmo is saved!
-
-
-1. Open file */src/bricker_source.nk* in Nuke
-
-2. Open **Control Panel** of group *bricker*
-
-3. Go to tab **Node**
-
-4. Press button **export as gizmo...**
-
-5. Select old gizmo location and overwrite file.
 **Attention! Don't change gizmo name! It should be named "pw_bricker.gizmo". This is important!**
 
+New version of gizmo is saved!
 
 # known issues
 
