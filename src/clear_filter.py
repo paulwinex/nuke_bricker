@@ -1,0 +1,1 @@
+nuke.thisNode()['chan_filter'].setValue('')

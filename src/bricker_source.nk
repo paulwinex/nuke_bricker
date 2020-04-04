@@ -1,0 +1,829 @@
+#! c:/cg/Nuke/10.0v4/nuke-10.0.4.dll -nx
+version 10.0 v4
+define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
+<layout version="1.0">
+    <window x="0" y="0" w="2560" h="1080" screen="0">
+        <splitter orientation="1">
+            <split size="40"/>
+            <dock id="" hideTitles="1" activePageId="Toolbar.1">
+                <page id="Toolbar.1"/>
+            </dock>
+            <split size="495" stretch="1"/>
+            <splitter orientation="2">
+                <split size="508"/>
+                <dock id="" activePageId="Viewer.1">
+                    <page id="Viewer.1"/>
+                </dock>
+                <split size="507"/>
+                <dock id="" activePageId="uk.co.thefoundry.scripteditor.1">
+                    <page id="uk.co.thefoundry.scripteditor.1"/>
+                </dock>
+            </splitter>
+            <split size="359"/>
+            <splitter orientation="2">
+                <split size="1019"/>
+                <dock id=""/>
+            </splitter>
+            <split size="1638"/>
+            <splitter orientation="2">
+                <split size="1019"/>
+                <dock id="" activePageId="DAG.1" focus="true">
+                    <page id="DAG.1"/>
+                </dock>
+            </splitter>
+        </splitter>
+    </window>
+</layout>
+}
+Root {
+ inputs 0
+ name D:/Dropbox/Dropbox/work/bricker/src/bricker_source.nk
+ frame 4
+ last_frame 50
+ lock_range true
+ fps 25
+ format "1280 720 0 0 1280 720 1 720p"
+ proxy true
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement Nuke
+}
+Group {
+ inputs 0
+ name bricker
+ help "My MEGA Help"
+ tile_color 0xff5300ff
+ xpos -368
+ ypos -535
+ addUserKnob {20 parms l Bricks}
+ addUserKnob {6 isbricker l INVISIBLE +INVISIBLE +STARTLINE}
+ addUserKnob {22 mainScript l INVISIBLE +INVISIBLE T "# Script for menu.py\n# pwMenu = toolbar.addMenu(\"PW Tools\")\n# pwMenu.addCommand(\"Bricker\", \"nuke.createNode(\\\"pw_bricker\\\")\")\n# def install_bricker():\n#     n = nuke.thisNode()\n#     if n.Class() == 'pw_bricker':\n#         n\['mainScript'].execute()\n#         nuke.removeOnCreate(install_bricker)\n# nuke.addOnCreate(install_bricker)\n\nimport nuke, nukescripts\nimport nuke.rotopaint as rp\nfrom PySide.QtCore import *\nfrom PySide.QtGui import *\nimport re, math, os, json, webbrowser\n\n################## VARIABLES\n\npwbr_objName = 'brickerTables'\npwbr_className = 'pw_bricker'\npwbr_detectKnob = 'brickedknobinfo'\nbrickerExistsVar = 'brickerInstalled'\npwbr_prefKnob = 'pw_bricker_pref'\npwbr_prefKnobTab1 = pwbr_prefKnob + '_start'\npwbr_prefKnobTab2 = pwbr_prefKnob + '_end'\npwbr_currentFrameKnobName = 'showframe'\npwbr_setFrameLabel = 'HLD'\npwbr_offsetFrameLabel = 'OFS'\npwbr_fontFactor = 0.7\npwbr_leading = 0.2\npwbr_sizes = \[1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]\nbricker_selection_width = 10\n\n#################### MAIN SCRIPT\n\npwbr_enabledKnobs = \['auto', 'imagewidth', 'inputChange', 'rebuild', 'connectsel', 'discon', 'pixelaspect',\n                     'colcount', 'show_size', 'show_shot', 'show_channels', 'chan_filter', 'chan_filter',\n                     'show_frame', 'grp', 'regexp', 'show_channel', 'timeline', 'clear_filter', 'select_bricks',\n                     'font_win', 'font_mac', 'font_lin', 'extractexpr']\n\n\ndef getMainWindow():\n    qApp = QApplication.instance()\n    for widget in qApp.topLevelWidgets():\n        if widget.metaObject().className() == 'Foundry::UI::DockMainWindow':\n            return widget\n\n\nevFilterWind = None\nqNuke = getMainWindow()\n\n\ndef brickerGroupChanged():\n    n = nuke.thisNode()\n    if not n or not is_bricker(n):\n        return\n    knob = nuke.thisKnob()\n    # if is_bricker(n):\n    if not knob:\n        return\n    if knob.name() in pwbr_enabledKnobs:\n        bricker_execute(knob)\n    elif knob.name() == 'overlay':\n            overlay_switch_node(n, knob.getValue())\n            # elif knob.name() == 'inputChange':\n            #     on = overlay_is_on()\n            #     overlay_switch_node(n, not overlay_is_on())\n    restore_connections(n)\n\n\nclass bricker_eventFilterWindowClass(QObject):\n    def eventFilter(self, obj, ev):\n        if ev.type() == QEvent.ChildPolished:\n            self.processNode(ev.child())\n        if ev.type() == QEvent.Type.ShortcutOverride:\n            if ev.key() == Qt.Key_Q:\n                overlay_switch_all()\n        return False\n\n    def processNode(self, n):\n        nukeNode = nuke.toNode(str(n.objectName()))\n        if nukeNode:\n            if is_bricker(nukeNode):\n                if nukeNode.Class() == pwbr_className:\n                    nukeNode\['error'].setVisible(False)\n                    nukeNode\['howto'].setVisible(False)\n                bricker_addTab(nukeNode, n)\n                for w in n.findChildren(QPushButton):\n                    if w.text() == 'Show Help':\n                        w.setStyleSheet('QPushButton\{background-color:#5F3300;\}')\n                nukeNode.begin()\n                sh = nuke.allNodes('Shuffle')\n                nukeNode.end()\n                if not sh:\n                    QTimer.singleShot(500, lambda: nukeNode\['rebuild'].execute())\n\n\ndef __bricker_install_old():\n    d = __import__('__main__').__dict__\n    if brickerExistsVar in d:\n        if d\[brickerExistsVar]:\n            return\n    global qNuke\n    global evFilterWind\n    d\[brickerExistsVar] = 1\n    evFilterWind = bricker_eventFilterWindowClass()\n    qNuke.installEventFilter(evFilterWind)\n    nuke.addKnobChanged(brickerGroupChanged)\n    nuke.addOnCreate(brickerGroupChanged)\n    # nuke.addOnScriptClose(bricker_uninstall)\n    # nuke.addOnScriptLoad(bricker_install)\n    overlay_menu_connect()\n\n\ndef bricker_install():\n    d = __import__('__main__').__dict__\n    if brickerExistsVar in d:\n        if d\[brickerExistsVar]:\n            return\n    global qNuke\n    d\[brickerExistsVar] = 1\n    nuke.addKnobChanged(bricker_addtab_timer, nodeClass=pwbr_className)\n    nuke.addOnCreate(brickerGroupChanged, nodeClass=pwbr_className)\n    nuke.addKnobChanged(brickerGroupChanged, nodeClass=pwbr_className)\n    overlay_menu_connect()\n\n\ndef bricker_addtab_timer():\n    if nuke.thisKnob().name() == 'showPanel':\n        node = nuke.thisNode()\n        QTimer.singleShot(20, lambda x=node: bricker_find_node_tab_to_node(node))\n\n\ndef bricker_find_node_tab_to_node(nukeNode):\n    # for tw in qNuke.findChildren(QTabWidget):\n    #     if tw.tabText(0) == u'Bricks' and tw.count() == 4:\n    #         tab = bricker_tabWidget(nukeNode, qNuke)\n    #         tw.insertTab(3, tab, 'Table')\n    #         tw.setCurrentIndex(0)\n    if is_bricker(nukeNode):\n        if nukeNode.Class() == pwbr_className:\n            nukeNode\['error'].setVisible(False)\n            nukeNode\['howto'].setVisible(False)\n        bricker_addTab(nukeNode, qNuke)\n        # for w in n.findChildren(QPushButton):\n        #     if w.text() == 'Show Help':\n        #         w.setStyleSheet('QPushButton\{background-color:#5F3300;\}')\n        nukeNode.begin()\n        sh = nuke.allNodes('Shuffle')\n        nukeNode.end()\n        if not sh:\n            QTimer.singleShot(500, lambda: nukeNode\['rebuild'].execute())\n\ndef restore_connections(node):\n    pass\n\n\ndef save_connections(node):\n    pass\n\n\ndef bricker_uninstall():\n    global qNuke\n    # global evFilterWind\n    # if evFilterWind:\n    #     qNuke.removeEventFilter(evFilterWind)\n    nuke.removeKnobChanged(brickerGroupChanged, nodeClass=pwbr_className)\n    nuke.removeOnCreate(brickerGroupChanged, nodeClass=pwbr_className)\n    nuke.removeKnobChanged(bricker_addtab_timer, nodeClass='pw_bricker')\n\n    overlay_menu_connect(0)\n    d = __import__('__main__').__dict__\n    if brickerExistsVar in d:\n        d\[brickerExistsVar] = 0\n\n\ndef is_bricker(node):\n    if hasattr(node, 'knob'):\n        return node.knob(pwbr_detectKnob) or node.Class() == pwbr_className\n\n\ndef bricker_addTab(node, w):\n    if not w.objectName(): # is nuke window\n        for tw in w.findChildren(QTabWidget):\n            if tw.tabText(0) == u'Bricks' and tw.count() == 4:\n                tab = bricker_tabWidget(node, qNuke)\n                tw.insertTab(3, tab, 'Table')\n                tw.setCurrentIndex(0)\n    else:\n        tabs = w.findChild(QTabWidget)\n        tab = bricker_tabWidget(node, w)\n        tabs.insertTab(3, tab, 'Table')\n        tab.setCurrentIndex(0)\n\ndef bricker_add_tab(node, tabwidget):\n    tab = bricker_tabWidget(node, qNuke)\n    tabwidget.insertTab(3, tab, 'Table')\n\n\ndef bricker_extract_name(node, bricker):\n    # if False:\n        # fake import\n        # from editexpr import BrickerEditRegexDialog\n    data = BrickerEditRegexDialog.loads(bricker)\n    if not data:\n        return\n    if not data\['expr']:\n        return\n    # result, error = BrickerEditRegexDialog.evaluate_expression(\n    result, error = bricker_evaluate_expression(\n        data\['lang'],\n        data\['expr'],\n        node,\n        data.get('group'))\n    if result:\n        return str(result)\n    if error:\n        nuke.tprint(error)\n        print error\n\n\ndef bricker_evaluate_expression(lang, expr, node, regex_group=None):\n    res = None\n    err = None\n\n    if lang == 'py':\n        expr = expr.strip().replace('thisNode', 'nuke.toNode(\"%s\")' % node.fullName())\n        f = r'''\\\ndef _pyfunc():\n\{\}\n_result = _pyfunc()\n'''\n        ns = dict(\n            nuke=nuke,\n            os=os,\n            re=re\n        )\n        if len(expr.split('\\n')) == 1:\n            expr = 'return '+expr\n        else:\n            if 'return' not in expr:\n                err = 'you should return value from multi line expression'\n        func = f.format(\n            ''.join(\['    ' + x + '\\n' for x in expr.split('\\n')])\n        )\n        try:\n            exec func in ns\n            res = ns\['_result']\n        except Exception as e:\n            err = str(e)\n\n    elif lang == 're':\n        test_line = None\n        k = node.knob('file')\n        if not k:\n            err = 'knob \"file\" not found'\n        else:\n            test_line = k.evaluate()\n        if not err and test_line is not None:\n            try:\n                m = re.match(expr.replace('\\\\\\\\', '\\\\'), test_line)\n                if m:\n                    if not regex_group is None:\n                        try:\n                            res = m.group(regex_group)\n                        except Exception as e:\n                            err = str(e)\n                    else:\n                        res = m.group(0)\n                else:\n                    m = re.findall(expr.replace('\\\\\\\\', '\\\\'), test_line)\n                    if m:\n                        res = m\[0]\n                    else:\n                        err = 'no match'\n            except Exception as e:\n                err = str(e)\n\n    elif lang == 'tcl':\n        exp = expr.replace('thisNode', node.fullName()) \\\n            .replace('\\n', ' ')\n        try:\n            res = nuke.tcl(str(exp))\n        except Exception as e:\n            err = str(e)\n    return res, err\n\n\ndef getShotNameFromPath(path, node):\n    # node = nuke.thisNode()\n    reg = node\['regexp'].toScript()\n    grp = node\['grp'].getValue()\n\n    shot = re.findall(reg, path)\n    if shot:\n        if len(shot) < int(grp) + 1:\n            return '\\\[Group not found\\]'\n        return shot\[int(grp)]\n\n\ndef getParent(node):\n    return nuke.toNode('.'.join(node.fullName().split('.')\[:-1])) or nuke.root()\n\n\ndef bricker_loadSettingKnob(node):\n    if node:\n        if node.knob(pwbr_prefKnob):\n            val = node\[pwbr_prefKnob].getValue()\n            try:\n                data = json.loads(val)\n                return data\n            except:\n                node\[pwbr_prefKnob].setValue(\"\")\n                return\n\n\ndef bricker_saveSettingKnob(node, data):\n    if not node.knob(pwbr_prefKnob):\n        grp1 = nuke.Tab_Knob(pwbr_prefKnobTab1, None, nuke.TABBEGINGROUP)\n        i = nuke.String_Knob(pwbr_prefKnob, 'Bricker preferences')\n        grp2 = nuke.Tab_Knob(pwbr_prefKnobTab2, None, nuke.TABENDGROUP)\n        i.setVisible(False)\n        grp1.setVisible(False)\n        grp2.setVisible(False)\n        node.addKnob(grp1)\n        node.addKnob(i)\n        node.addKnob(grp2)\n\n    text = node\[pwbr_prefKnob].getValue()\n    try:\n        d = json.loads(text)\n    except:\n        d = \{\}\n    d.update(data)\n    node\[pwbr_prefKnob].setValue(json.dumps(d))\n\n\ndef clear_settings_from_selected(node_bricker=None):\n    for i in range(node_bricker.inputs()):\n        n = node_bricker.input(i)\n        if n:\n            if n\['selected'].getValue():\n                node_bricker.setInput(i, None)\n                clear_node_settings(n)\n\n\ndef clear_node_settings(node):\n    for k in \[pwbr_prefKnobTab2, pwbr_prefKnob, pwbr_prefKnobTab1]:\n        if node.knob(k):\n            node.removeKnob(node\[k])\n\n\ndef reset_node_settings(node):\n    d = dict(mode=False,\n             ofs=0,\n             frm=0\n             )\n    bricker_saveSettingKnob(node, d)\n\n\ndef clear_selected_nodes(*args):\n    root = nuke.thisNode() or nuke.root()\n    with root:\n        nodes = \[n for n in nuke.selectedNodes() if not is_bricker(n)]\n        for n in nodes:\n            clear_node_settings(n)\n\n\ndef find_node(root, type):\n    for n in root.dependent():\n        if n.Class() == type:\n            return n\n        next = find_node(n, type)\n        if next:\n            return next\n\n\n# OVERLAY\ndef overlay_item():\n    item = \[x for x in nuke.menu('Viewer').items() if x.name() == 'Overlay']\n    if item:\n        return item\[0]\n\n\ndef overlay_menu_switcher(val):\n    overlay_switch_all()\n\n\ndef overlay_menu_connect(on=True):\n    item = overlay_item()\n    if item:\n        a = item.action()\n        if on:\n            if a.receivers(SIGNAL(\"triggered()\")) == 1:\n                try:\n                    a.triggered\[bool].connect(overlay_menu_switcher)\n                except:\n                    print 'Not connected'\n        else:\n            if a.receivers(SIGNAL(\"triggered()\")) == 2:\n                try:\n                    a.triggered\[bool].disconnect(overlay_menu_switcher)\n                except:\n                    print 'Not disconnected'\n\n\ndef overlay_is_on():\n    item = overlay_item()\n    if item:\n        #    o.invoke()\n        return item.action().isChecked()\n\n\ndef overlay_switch_all():\n    def delayed():\n        on = overlay_is_on()\n        nodes = \[x for x in nuke.allNodes() if is_bricker(x)]\n        for n in nodes:\n            n\['overlay'].setValue(on)\n\n    QTimer.singleShot(50, delayed)\n\n\ndef overlay_switch_node(node, on):\n    if isinstance(node, str):\n        node = nuke.toNode(node)\n    node.begin()\n    nodes = nuke.allNodes('Text') + nuke.allNodes('Text2') + nuke.allNodes('Rectangle')\n    for n in nodes:\n        n\['disable'].setValue(not on)\n        # n\['disable'].setValue(on)\n    node.end()\n\n\ndef rebuildAction():\n    if not bricker_getFontPath():\n        nuke.message('Error Font Path')\n        return\n\n    n = nuke.thisNode()\n    n.begin()\n    inputs = nuke.allNodes('Input')\n    out = nuke.allNodes('Output')\n    # clear\n    for nod in nuke.allNodes():\n        if not nod in inputs + out:\n            nuke.delete(nod)\n    inputs = sorted(inputs, key=lambda x: int(x.name()\[5:]))\n    # collect inputs\n    connectedInputs = \[]\n    for i, inp in enumerate(inputs):\n        inNode = n.input(i)\n        if inNode:\n            connectedInputs.append(\[inp, inNode])\n    # build setup\n    computeBricks(connectedInputs)\n    n.end()\n\n\ndef bricker_upper_copy_settings(node):\n    if not node.knob(pwbr_prefKnob) and node.inputs():\n        for i in range(node.inputs()):\n            data = bricker_loadSettingKnob(node.input(i))\n            if data:\n                bricker_saveSettingKnob(node, data)\n\n\ndef computeBricks(inputs):\n    node = nuke.thisNode()\n    if not inputs:\n        node\[pwbr_detectKnob].setValue('Not connected')\n        return\n    # copy settings\n    for n in inputs:\n        bricker_upper_copy_settings(n\[1])\n    colCount, rowCount = bricker_getMatrix(len(inputs))\n\n    width = pwbr_sizes\[int(node\['imagewidth'].getValue())]\n    pixel = node\['pixelaspect'].getValue() or 1\n    colMax = max(\[x\[1].width() for x in inputs])\n\n    mult = float(width) / (colMax * colCount)\n    imageWidth = colMax * mult\n    imageHeight = max(\[x\[1].height() * (imageWidth / x\[1].width()) * (1.0 / pixel) for x in inputs])\n\n    height = imageHeight * rowCount\n    index = 0\n    b = 0\n    nodesToMerge = \[]\n    timelines = \[]\n    for j in range(rowCount):\n        for i in range(colCount):\n            inp, img = inputs\[index]\n            w = img.width()\n            h = img.height() * (1.0 / pixel)\n            scale = imageWidth / w\n            x = imageWidth * i\n            y = (height - (imageHeight * j) - imageHeight) + (imageHeight - (h * scale))\n\n            sh = nuke.nodes.Shuffle(inputs=\[inp])\n            ofs = nuke.nodes.TimeOffset(inputs=\[sh])\n            ff = nuke.Int_Knob('finalframe', 'Final Frame')\n            ofs.addKnob(ff)\n            of = nuke.Int_Knob('offset', 'Offset Frame')\n            ofs.addKnob(of)\n            ofs\['time_offset'].setExpression('-offset')\n            ff.setExpression('offset + frame')\n            hld = nuke.nodes.FrameHold(inputs=\[sh], xpos=ofs.xpos(), ypos=ofs.ypos() + 25)\n            sw = nuke.nodes.Switch(inputs=\[ofs, hld], xpos=ofs.xpos(), ypos=hld.ypos() + 35, name='SW_%s' % inp.name())\n\n            ref = nuke.nodes.Reformat(inputs=\[sw], type=2, scale=scale)\n            if node\['select_bricks'].getValue():\n                color = node\['selection_color'].getValue()\n                selectNode = bricker_createSelectionShape(ref, bricker_selection_width * (colCount / 2), color)\n            else:\n                selectNode = ref\n            trScale = nuke.nodes.Transform(inputs=\[selectNode])\n            trScale\['scale'].setValue(1.0 / pixel, 1)\n            out, frameNode = bricker_createTextNode(img, trScale, ofs, hld, sw, sh, bool(node\['overlay'].getValue()))\n            # timeline\n            if node\['timeline'].getValue() and not img.firstFrame() == img.lastFrame() and img.channels():\n                out, moveTl = bricker_createTimeLine(out, ref, node, frameNode)\n                timelines.append(moveTl)\n            tr = nuke.nodes.Transform(inputs=\[out])\n\n            tr\['translate'].setValue(x, 0)\n            tr\['translate'].setValue(y, 1)\n\n            nodesToMerge.append(tr)\n\n            settings = bricker_loadSettingKnob(img)\n            if settings:\n                sh\['in'].setValue(settings.get('layer', 'rgb'))\n                ofs\['offset'].setValue(settings.get('ofs', 0))\n                hld\['first_frame'].setValue(settings.get('frm', 0))\n                sw\['which'].setValue(int(settings.get('mode', 0)))\n\n            index += 1\n            if index > len(inputs) - 1:\n                b = 1\n                break\n\n        if b: break\n    if timelines:\n        heightArray = \[x\['imageheight'].getValue() for x in timelines]\n        maxH = max(heightArray)\n        for t in timelines:\n            t\['translate'].setValue(-(maxH - t\['imageheight'].getValue()), 1)\n\n    mainRef = nuke.nodes.Reformat(type=1, box_fixed=True, box_width=width, box_height=height)\n    nodesToMerge.insert(1, None)\n    mrg = nuke.nodes.Merge2(inputs=\[mainRef] + nodesToMerge)\n    out = nuke.allNodes('Output')\[0]\n    mrg.setXYpos(out.xpos(), out.ypos() - 40)\n    mainRef.setXYpos(mrg.xpos() + 150, mrg.ypos())\n    out.setInput(0, mrg)\n    node\[pwbr_detectKnob].setValue('Input count: %s' % len(inputs))\n    # QTimer.singleShot(30, lambda : overlay_switch_node(node, bool(node\['overlay'].getValue())))\n\n\ndef bricker_getMatrix(x):\n    c = int(nuke.thisNode()\['colcount'].getValue())\n    if not c:\n        c = int(math.ceil(math.sqrt(x)))\n    r = (x / c)\n    if x % c:\n        r += 1\n    return int(c), int(r)\n\n\ndef bricker_getText(node):\n    par = nuke.thisNode()\n    if par\['show_shot'].getValue():\n        # path = node\['file'].getValue()\n        # title = getShotNameFromPath(path, nuke.thisNode())\n        title = bricker_extract_name(node, par)\n        if not title:\n            title = '\\<' + node.name() + '\\>'\n    else:\n        title = node.name()\n    info = ''\n\n    if par\['show_size'].getValue():\n        info += '%s x %s' % (node.width(), node.height())\n\n    if par\['show_channels'].getValue():\n        chan = node.channels()\n        chan = list(set(\[x.split('.')\[0] for x in chan]))\n        fil = par\['chan_filter'].getValue()\n        if fil:\n            chan = \[z for z in map(lambda x: x if any(\[(y in x) for y in fil.split()]) else None, chan) if z]\n        if chan:\n            info += '\\n' + '\\n'.join(sorted(chan))\n    if isinstance(title, (list, tuple)):\n        title = title\[0]\n    return title, info.strip()\n\n\ndef bricker_getFontPath(node=None):\n    if not node:\n        node = nuke.thisNode()\n    if nuke.env.get('WIN32'):\n        return node\['font_win'].getValue()\n    elif nuke.env.get('MACOS'):\n        return node\['font_mac'].getValue()\n    elif nuke.env.get('LINUX'):\n        return node\['font_lin'].getValue()\n\n        # return nuke.thisNode()\['font_current'].evaluate()\n\n\n# def bricker_update_fonts(node):\n#     font = bricker_getFontPath(node)\n#     with node:\n#         textnodes = nuke.allNodes('Text')\n#         for text in textnodes:\n#             text\['font'].setValue(font or '')\n\ndef bricker_createTextNode(node, mrgNode, ofs, hld, sw, sh, overlay):\n    title, info = bricker_getText(node)\n    par = nuke.thisNode()\n    pixel = par\['pixelaspect'].getValue()\n    alignNodes = \[]\n    w = mrgNode.width()\n    h = mrgNode.height() * (1 / pixel)\n    font = bricker_getFontPath()\n    text_nodes = \[]\n    # Node name \\ Shot name\n    # text1 = nuke.nodes.Text2(name=nukescripts.findNextNodeName('NODENAME'))\n    text1 = nuke.nodes.Text(name=nukescripts.findNextNodeName('NODENAME'))\n    alignNodes.append(text1)\n    text_nodes.append(text1)\n    # text1\['font'].setValue(font or '', 'Regilar')\n    text1\['font'].setValue(font or '')\n    text1\['yjustify'].setValue(1)\n    text1\['cliptype'].setValue(0)\n    text1\['message'].setValue(title)\n    text1\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 0)\n    expr = 'min( (\{fontoffset\}*max(\{fontMult\},0.5))+((\{fontsize\}*\{fontFactor\}*max(\{fontMult\},0.5) )), box.t) + (\{fontsize\}*\{fontFactor\}*\{leading\}*max(\{fontMult\},0.5)*(\{lineCount\}))'.format(\n        fontoffset='.'.join(\[par.name(), par\['fontoffset'].name()]),\n        fontsize='.'.join(\[par.name(), par\['fontsize'].name()]),\n        fontFactor=pwbr_fontFactor,\n        lineCount=len(info.split('\\n')),\n        # vert = '.'.join(\[par.name(), par\['vert'].name()]),\n        leading=1 + pwbr_leading,\n        fontMult='.'.join(\[par.name(), par\['imagewidth'].name()])\n    )\n    text1\['box'].setExpression(expr, 1)\n    text1\['box'].setExpression('%s-%s' % (w, '.'.join(\[par.name(), par\['fontoffset'].name()])), 2)\n    text1\['box'].setExpression('%s-%s' % (h, '.'.join(\[par.name(), par\['fontoffset'].name()])), 3)\n    text1\['size'].setExpression(\n        '\{fontsize\}*max(\{fontMult\},0.5)'.format(fontsize='.'.join(\[par.name(), par\['fontsize'].name()]),\n                                                fontMult='.'.join(\[par.name(), par\['imagewidth'].name()])))\n    text1\['yjustify'].setExpression('1+2*0')\n    text1\['xjustify'].setExpression('.'.join(\[par.name(), par\['horiz'].name()]))\n    finalFrame = nuke.Int_Knob(pwbr_currentFrameKnobName, 'Frame')\n    text1.addKnob(finalFrame)\n    frExpr = '\[if \{\{\[value \{switch\}.which]==1\}\} \{\{return \[value \{hold\}.knob.first_frame]\}\} \{\{return  \[ value \{offset\}.knob.finalframe  ] \}\}]'.format(\n        switch=sw.name(),\n        hold=hld.name(),\n        offset=ofs.name()\n    )\n    finalFrame.setExpression(frExpr)\n    framepatn = '.'.join(\[par.name(), text1.name()])\n    # Image size\n    text2 = nuke.nodes.Text(name=nukescripts.findNextNodeName('IMAGESIZE'))\n    alignNodes.append(text2)\n    text_nodes.append(text2)\n    text2\['font'].setValue(font)\n    text2\['yjustify'].setValue(1)\n    text2\['leading'].setValue(pwbr_leading)\n    text2\['cliptype'].setValue(0)\n    text2\['message'].setValue(info)\n    text2\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 0)\n    text2\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 1)\n    text2\['box'].setExpression('%s-%s' % (w, '.'.join(\[par.name(), par\['fontoffset'].name()])), 2)\n    text2\['box'].setExpression('\{height\}-\{offset\}-(\{fontsize\}*\{width\}) - (\{fontsize\}/2) - (\{fontsize\}*0.2)'.format(\n        height=h,\n        offset='.'.join(\[par.name(), par\['fontoffset'].name()]),\n        fontsize='.'.join(\[par.name(), par\['fontsize'].name()]),\n        width='.'.join(\[par.name(), par\['imagewidth'].name()])), 3)\n    text2\['size'].setExpression(text1.name() + '.' + text1\['size'].name() + \"*\" + str(pwbr_fontFactor))\n    text2\['yjustify'].setExpression('1+2*0')\n    text2\['xjustify'].setExpression('.'.join(\[par.name(), par\['horiz'].name()]))\n\n    text3 = None\n    if par\['show_frame'].getValue():\n        # Frame\n        text3 = nuke.nodes.Text(name=nukescripts.findNextNodeName('FRAME'))\n        alignNodes.append(text3)\n        text_nodes.append(text3)\n        text3\['font'].setValue(font)\n        text3\['yjustify'].setValue(1)\n        text3\['cliptype'].setValue(0)\n        frExpr = '\[value \{text\}.\{knob\}]'.format(text=framepatn, knob=pwbr_currentFrameKnobName)\n        text3\['message'].setValue('Frame: %s' % frExpr)\n        text3\['color'].setValue(\[1, 1, 1, 1])\n        text3\['color'].setExpression('1-\{switch\}.which'.format(switch='.'.join(\[par.name(), sw.name()])), 2)\n        text3\['size'].setExpression(text1.name() + '.' + text1\['size'].name() + \"*\" + str(pwbr_fontFactor))\n        text3\['xjustify'].setExpression('\{menu\} == 2 ? 0 : 2'.format(menu='.'.join(\[par.name(), par\['horiz'].name()])))\n        text3\['yjustify'].setExpression('1+2*0')\n        text3\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 0)\n        text3\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 1)\n        text3\['box'].setExpression('\{h\}-\{offset\}'.format(offset='.'.join(\[par.name(), par\['fontoffset'].name()]), h=w),\n                                   2)\n        text3\['box'].setExpression('\{w\}-\{offset\}'.format(offset='.'.join(\[par.name(), par\['fontoffset'].name()]), w=h),\n                                   3)\n        mtext1 = nuke.nodes.Merge(inputs=\[text1, text3])\n        alignNodes.append(mtext1)\n    else:\n        mtext1 = text1\n\n    # current channel\n\n    text4 = None\n    if par\['show_channel'].getValue():\n        text4 = nuke.nodes.Text(name=nukescripts.findNextNodeName('CHANNEL'))\n        alignNodes.append(text4)\n        text_nodes.append(text4)\n        text4\['font'].setValue(font)\n        text4\['yjustify'].setValue(3)\n        text4\['leading'].setValue(pwbr_leading)\n        text4\['cliptype'].setValue(0)\n        text4\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 0)\n        text4\['box'].setExpression('.'.join(\[par.name(), par\['fontoffset'].name()]), 1)\n        text4\['box'].setExpression('%s-%s' % (w, '.'.join(\[par.name(), par\['fontoffset'].name()])), 2)\n        text4\['box'].setExpression('%s-%s-(%s*%s)' % (\n        h, '.'.join(\[par.name(), par\['fontoffset'].name()]), '.'.join(\[par.name(), par\['fontsize'].name()]),\n        '.'.join(\[par.name(), par\['imagewidth'].name()])), 3)\n        text4\['box'].setExpression('\{height\}-\{offset\}-(\{fontsize\}*\{width\}) - (\{fontsize\}/2)'.format(\n            height=h,\n            offset='.'.join(\[par.name(), par\['fontoffset'].name()]),\n            fontsize='.'.join(\[par.name(), par\['fontsize'].name()]),\n            width='.'.join(\[par.name(), par\['imagewidth'].name()])), 3)\n        text4\['yjustify'].setExpression('1+2*0')\n        text4\['xjustify'].setExpression('\{menu\} == 2 ? 0 : 2'.format(menu='.'.join(\[par.name(), par\['horiz'].name()])))\n        chanexpr = '\[value \{parent\}.\{node\}.knob.in]'.format(parent=par.name(), node=sh.name())\n        text4\['message'].setValue(chanexpr)\n        text4\['size'].setExpression(text1.name() + '.size' + \"*\" + str(pwbr_fontFactor))\n\n        mtext1 = nuke.nodes.Merge(inputs=\[text4, mtext1])\n        alignNodes.append(mtext1)\n\n    tm = nuke.nodes.Merge(inputs=\[text2, mtext1])\n    ed = nuke.nodes.EdgeDetectWrapper(inputs=\[tm], blursize=3)\n    m = nuke.nodes.Merge(inputs=\[mrgNode, ed])\n    # align nodes\n    x, y = mrgNode.xpos(), mrgNode.ypos()\n    allnodes = alignNodes + \[tm, ed, m]\n    for i, n in enumerate(allnodes):\n        n.setXYpos(x, y + (40 * i) + 40)\n    for i, n in enumerate(text_nodes):\n        n\['disable'].setValue(not overlay)\n\n    return m, text1\n\n\ndef bricker_createTimeLine(input, img, parent, frameNode):\n    w = img.width()\n    # font = parent\['font_current'].evaluate()\n    font = bricker_getFontPath(parent)\n    ref = nuke.nodes.Reformat(type=2, scale=img\['scale'].getValue())\n    rec1 = nuke.nodes.Rectangle(inputs=\[ref])\n    offsetExpr = 'max(%s,0)' % '.'.join(\[parent.name(), parent\['tl_offset'].name()])\n    heightExpr = 'max(10,%s)' % '.'.join(\[parent.name(), parent\['tl_height'].name()])\n    borderExpr = 'min(max(0,\{border\}), \{height\}/3)'.format(border='.'.join(\[parent.name(), parent\['tl_border'].name()]),\n                                                           height=heightExpr)\n    currFrameExpr = '\{node\}.\{knob\}'.format(node='.'.join(\[parent.name(), frameNode.name()]),\n                                           knob=pwbr_currentFrameKnobName)\n    fontSizeExpr = frameNode.name() + '.size' + \" * %s\" % pwbr_fontFactor\n\n    rec1\['area'].setExpression(offsetExpr, 0)\n    rec1\['area'].setExpression(offsetExpr, 1)\n    rec1\['area'].setExpression('%s-%s' % (w, offsetExpr), 2)\n    rec1\['area'].setExpression('%s + %s' % (heightExpr, offsetExpr), 3)\n    rec1\['color'].setValue(\[0, 0, 0, 1])\n\n    rec2 = nuke.nodes.Rectangle(inputs=\[rec1])\n\n    st = nuke.Int_Knob('start_frame', 'Start')\n    rec2.addKnob(st)\n    st.setValue(img.firstFrame())\n    en = nuke.Int_Knob('end_frame', 'End')\n    rec2.addKnob(en)\n    en.setValue(img.lastFrame())\n\n    rec2\['area'].setExpression(rec1.name() + '.area.x+' + borderExpr, 0)\n    rec2\['area'].setExpression(rec1.name() + '.area.y+' + borderExpr, 1)\n    maxValExpr = '\{rec\}.area.r-\{border\}'.format(rec='.'.join(\[parent.name(), rec1.name()]),\n                                                border=borderExpr)\n    exp = 'min(max(area.x,( (\{frame\} - start_frame) / (end_frame - start_frame) ) * (\{max\} - area.x) + area.x), \{max\})'.format(\n        frame=currFrameExpr,\n        max=maxValExpr)\n    rec2\['area'].setExpression(exp, 2)\n    rec2\['area'].setExpression(rec1.name() + '.area.t-' + borderExpr, 3)\n    rec2\['color'].setValue(\[0, 0, 0, 1])\n    rec2\['color'].setExpression('parent.timeline_color', 0)\n    rec2\['color'].setExpression('parent.timeline_color', 1)\n    rec2\['color'].setExpression('parent.timeline_color', 2)\n\n    # frames\n\n    fStart = nuke.nodes.Text(message='\[value \{val\}]'.format(val='.'.join(\[parent.name(), rec2.name(), 'start_frame'])),\n                             inputs=\[rec2])\n    fStart\['font'].setValue(font)\n    fStart\['size'].setExpression(fontSizeExpr)\n    fStart\['yjustify'].setValue(3)\n    fStart\['box'].setExpression(offsetExpr, 0)\n    fStart\['box'].setExpression(offsetExpr + '+' + heightExpr, 1)\n    fStart\['box'].setExpression('%s-%s' % (w, offsetExpr), 2)\n    fStart\['box'].setValue(400, 3)\n\n    fEnd = nuke.nodes.Text(message='\[value \{val\}]'.format(val='.'.join(\[parent.name(), rec2.name(), 'end_frame'])),\n                           inputs=\[fStart])\n    fEnd\['font'].setValue(font)\n    fEnd\['size'].setExpression(fontSizeExpr)\n    fEnd\['yjustify'].setValue(3)\n    fEnd\['xjustify'].setValue(2)\n    fEnd\['box'].setExpression(offsetExpr, 0)\n    fEnd\['box'].setExpression(offsetExpr + '+' + heightExpr, 1)\n    fEnd\['box'].setExpression('%s-%s' % (w, offsetExpr), 2)\n    fEnd\['box'].setValue(400, 3)\n\n    offsetTr = nuke.nodes.Transform(inputs=\[fEnd])\n    oh = nuke.Double_Knob('imageheight', 'Img Hght')\n    offsetTr.addKnob(oh)\n    oh.setValue(img.height())\n\n    m = nuke.nodes.Merge(inputs=\[input, offsetTr])\n\n    x, y = input.xpos(), input.ypos()\n    for i, n in enumerate(\[rec1, rec2, fStart, fEnd, m, ref, offsetTr]):\n        n.setXYpos(x, y + (40 * i) + 40)\n\n    return m, offsetTr\n\n\ndef bricker_createSelectionShape(src, width, color):\n    roto = nuke.nodes.RotoPaint()\n    roto.setInput(0, src)\n    k = roto\['curves']\n\n    points = \[\[width, width],\n              \[width, roto.height() - width],\n              \[roto.width() - width, roto.height() - width],\n              \[roto.width() - width, width]]\n    shape = rp.Shape(k)\n    shape.name = 'selection_bound'\n    for pt in points:\n        cp = rp.ShapeControlPoint()\n        cp.center.addPositionKey(0, rp.CVec2(*pt))\n        shape.append(cp)\n    atr = shape.getAttributes()\n    atr.set(1, atr.kRedAttribute, color\[0])\n    atr.set(1, atr.kGreenAttribute, color\[1])\n    atr.set(1, atr.kBlueAttribute, color\[2])\n    atr.set(1, atr.kInvertedAttribute, 1)\n    k.rootLayer.append(shape)\n    roto\['disable'].setValue(1)\n    return roto\n\n\ndef bricker_remove_duplicates(node=None):\n    node = node or nuke.thisNode()\n    nodes = \[]\n    for i in range(100):\n        n = node.input(i)\n        if n:\n            if n in nodes:\n                node.setInput(i, None)\n            else:\n                nodes.append(n)\n\n\n# execute\ndef bricker_execute(knob=None, node=None):\n    node = node or nuke.thisNode()\n    knob = knob or nuke.thisKnob()\n    if knob.name() in pwbr_enabledKnobs:\n        if node\['auto'].getValue() == 1.0 or knob.name() in 'rebuild':\n            rebuildAction()\n            if knob.name() in \['inputChange', 'rebuild']:\n                d = __import__('__main__').__dict__\n                if pwbr_objName in d:\n                    for n in d\[pwbr_objName]:\n                        d\[pwbr_objName]\[n].fillTable()\n                save_connections(node)\n\n\n##################### connect disconnect\n\ndef bricker_disconnect(node=None):\n    node = node or nuke.thisNode()\n    for i in range(node.inputs()):\n        node.setInput(i, None)\n\n\ndef bricker_disconnect_node(node, bricker):\n    for i in range(bricker.inputs()):\n        if bricker.input(i) == node:\n            bricker.setInput(i, None)\n\n\ndef bricker_connectSelected(node=None):\n    node = node or nuke.thisNode()\n    p = nuke.thisParent().begin()\n    sel = nuke.selectedNodes()\n    p.end()\n    free = \[]\n    for i in range(50):\n        if not node.input(i):\n            free.append(i)\n    for s in sel:\n        if free:\n            if not s is node:\n                node.setInput(free.pop(0), s)\n        else:\n            break\n\n\ndef bricker_actions_menu(node):\n    actions = \[\n        ('Connect Selected', bricker_connectSelected),\n        ('Disconnect All', bricker_disconnect),\n        ('Disconnect Selected Inputs And Clear', clear_settings_from_selected),\n        # ('Clear and Reset Selected Nodes', clear_selected_nodes),\n        ('Remove Duplicates', bricker_remove_duplicates),\n    ]\n\n    menu = QMenu(qNuke)\n    for title, act in actions:\n        menu.addAction(QAction(title, qNuke, triggered=lambda a=act: a(node)))\n    menu.exec_(QCursor.pos())\n\n\n# widgets\n\nclass bricker_tabWidget(QWidget):\n    def __init__(self, node, parent):\n        super(bricker_tabWidget, self).__init__(parent)\n        self.node = node\n        if False:\n            self.node = nuke.nodes.Node()\n        self.ly = QVBoxLayout(self)\n        self.setLayout(self.ly)\n        self.table = QTableWidget(self)\n        self.ly.addWidget(self.table)\n        self.table.horizontalHeader().setResizeMode(QHeaderView.ResizeToContents)\n        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)\n        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)\n        self.setContextMenuPolicy(Qt.CustomContextMenu)\n        self.customContextMenuRequested.connect(self.customMenu)\n        self.table.itemDoubleClicked.connect(self.open_panel)\n        self.table.itemSelectionChanged.connect(self.select_nodes)\n        self.reload_btn = QPushButton('Refresh')\n        self.reload_btn.clicked.connect(self.fillTable)\n        self.ly.addWidget(self.reload_btn)\n        self.selectionArray = \{\}\n\n        d = __import__('__main__').__dict__\n        if pwbr_objName in d:\n            d\[pwbr_objName]\[self.node.name()] = self\n        else:\n            d\[pwbr_objName] = \{self.node.name(): self\}\n\n        self.fillTable()\n        self.table.horizontalHeader().setResizeMode(3, QHeaderView.Stretch)\n\n    def customMenu(self):\n        menu = QMenu(self)\n\n        def reset_nodes(nodes=None):\n            for i in range(self.node.inputs()):\n                n = self.node.input(i)\n                if n in nodes:\n                    self.node.setInput(i, None)\n                    reset_node_settings(n)\n                    self.node.setInput(i, n)\n            # sel = list(set(\[x.row() for x in self.table.selectedIndexes()]))\n            self.fillTable()\n            # for i in sel:\n            #     self.table.selectRow(i)\n\n        menu.addAction(QAction('Reset', self, triggered=lambda: reset_nodes(self.selected_nodes())))\n\n        def disconnect_selected_nodes(reset=False):\n            nodes = self.selected_nodes()\n            for node in nodes:\n                bricker_disconnect_node(node, self.node)\n            if reset:\n                reset_nodes(nodes)\n            self.fillTable()\n\n        menu.addAction(QAction('Disconnect', self, triggered=disconnect_selected_nodes))\n        menu.addAction(QAction('Disconnect and Reset', self, triggered=lambda: disconnect_selected_nodes(True)))\n        menu.addAction(QAction('Remove Duplicates', self, triggered=lambda: bricker_remove_duplicates(self.node)))\n\n        # def move_input(up=True):\n        #     nodes = self.selected_nodes()\n        #\n        #     for node in nodes:\n        #         print 'Move node UP', node.name(), up\n        #     self.fillTable()\n        # menu.addAction(QAction('Move Up', self, triggered=move_input))\n        # menu.addAction(QAction('Move Down', self, triggered=lambda :move_input(False)))\n\n        menu.exec_(QCursor.pos())\n\n    def hideEvent(self, *args, **kwargs):\n        self.clear_selection_roto()\n        # main = __import__('__main__').__dict__\n        # if pwbr_objName in main:\n        #     if self.node.name() in main\[pwbr_objName]:\n        #         del main\[pwbr_objName]\[self.node.name()]\n        QWidget.hideEvent(self, *args, **kwargs)\n\n    def showEvent(self, event):\n        self.fillTable()\n        QWidget.showEvent(self, event)\n\n    def open_panel(self, item):\n        i = item.row()\n        d = self.table.item(i, 0).data(32)\n        if d:\n            d.showControlPanel()\n\n    def selected_nodes(self, withRoto=False):\n        items = self.table.selectedItems()\n        nodes = \[]\n        rows = list(set(\[it.row() for it in items]))\n        for i in rows:\n            node = self.table.item(i, 0).data(32)\n            if withRoto:\n                nodes.append((node, self.selectionArray.get(i)))\n            else:\n                nodes.append(node)\n        return nodes\n\n    def select_nodes(self, *args):\n        nodes = self.selected_nodes(True)\n        nukescripts.clear_selection_recursive()\n        self.clear_selection_roto()\n        if nodes:\n            for n in nodes:\n                n\[0].setSelected(True)\n                if n\[1]:\n                    n\[1]\['disable'].setValue(False)\n                    # else:\n                    #     print 'Roto not found for', n\[0].name()\n\n    def clear_selection_roto(self):\n        with self.node:\n            for node in nuke.allNodes('RotoPaint'):\n                node\['disable'].setValue(True)\n\n    def find_selection_roto(self, i):\n        with self.node:\n            input = sorted(nuke.allNodes('Input'), key=lambda x: int(x.name()\[5:]))\[i]\n            n = find_node(input, 'RotoPaint')\n            return n\n\n    def fillTable(self):\n        main = __import__('__main__').__dict__\n        # savedSelection = self.selected_nodes()\n        # select_index = \[]\n        try:\n            self.table.clear()\n        except:\n            return\n        if pwbr_objName in main:\n            # try:\n            nodes = \[]\n            for i in range(100):\n                inp = self.node.input(i)\n                if inp:\n                    nodes.append(\[inp, i])\n            self.table.setColumnCount(5)\n            self.table.setColumnWidth(0, 20)\n            self.table.setRowCount(len(nodes))\n            labels = \[str(x\[1] + 1) for x in nodes]\n            self.table.setVerticalHeaderLabels(labels)\n            self.table.setHorizontalHeaderLabels(\['Node', 'Size', 'Shot', 'Frame', 'Channel'])\n            extract_name = self.node\['show_shot'].getValue()\n            for i, nd in enumerate(nodes):\n                col = 0\n                currentNode, inp = nd\n                # if currentNode in savedSelection:\n                #     select_index.append(i)\n                roto = self.find_selection_roto(inp)\n                self.selectionArray\[i] = roto\n                # node name\n                item = QTableWidgetItem(currentNode.name())\n                self.table.setItem(i, col, item)\n                item.setData(32, currentNode)\n                # image size\n                col += 1\n                sz = '%s x %s' % (currentNode.width(), currentNode.height())\n                item = QTableWidgetItem(sz)\n                self.table.setItem(i, col, item)\n                # shot name\n                col += 1\n                item = QTableWidgetItem()\n                if extract_name:\n                    title = bricker_extract_name(currentNode, self.node)\n                    item.setText(title or '')\n                # if currentNode.Class() == 'Write':\n                #     path = currentNode\['file'].getValue()\n                #     title = getShotNameFromPath(path, self.node)\n                #     if title:\n                #         item.setText(title)\n                self.table.setItem(i, col, item)\n                # frame\n                col += 1\n                fr = bricker_setFrameWidgetClass(currentNode, inp, self.node, self)\n                self.table.setCellWidget(i, col, fr)\n\n                # layer\n                col += 1\n                ch = self.getChannels(currentNode)\n                d = bricker_loadSettingKnob(currentNode)\n                box = bricker_layerListClass(currentNode, inp, self.node, ch, d, self)\n\n                self.table.setCellWidget(i, col, box)\n                # move buttons\n                # restore selection\n                # self.table.blockSignals(1)\n                # for i in select_index:\n                #     print i\n                #     self.table.selectRow(i)\n                # self.table.blockSignals(0)\n\n        else:\n            print 'ERROR REBUILD TABLE'\n\n    def getChannels(self, node):\n        chan = node.channels()\n        names = \[x.split('.')\[0] for x in chan]\n        res = \[]\n        for ch in names:\n            if not ch in res:\n                res.append(ch)\n        # create shuffle\n        return res\n\n\nclass bricker_setFrameWidgetClass(QWidget):\n    tooltipText = 'Press Ctrl when switch to HLD to keep current frame frozen'\n    use_slider = True\n\n    def __init__(self, node, inp, mainNode, table):\n        super(bricker_setFrameWidgetClass, self).__init__()\n        self.node = node\n        self.inp = inp\n        self.main = mainNode\n        self.table = table\n        self.ly = QHBoxLayout(self)\n        self.ly.setContentsMargins(0, 0, 0, 0)\n        self.ly.setSpacing(0)\n\n        self.ofs = self.hld = self.sw = self.sfl = None\n\n        self.switcher = QPushButton(pwbr_setFrameLabel)\n        self.switcher.setFlat(1)\n        self.switcher.setCheckable(1)\n        self.switcher.clicked.connect(self.switchMode)\n        self.switcher.setMinimumWidth(40)\n        self.switcher.setMaximumWidth(40)\n        self.ly.addWidget(self.switcher)\n        self.switcher.setToolTip(self.tooltipText)\n        self.switcher.setStyleSheet(\"QToolTip \{ color: #000; background-color: #ffffdc; border: 1px solid black; \}\")\n        # self.holdFrame = QSpinBox()\n        # self.holdFrame.setButtonSymbols(QAbstractSpinBox.NoButtons)\n        # self.holdFrame.setMinimumHeight(20)\n        # self.holdFrame.setMinimum(-999999)\n        # self.holdFrame.setMaximum(999999)\n        # self.holdFrame.setStyleSheet('border:none;text-align: center;')\n        self.holdFrame = self.frame_widget('hld')\n\n        self.holdFrame.valueChanged.connect(self.changeValue)\n        self.ly.addWidget(self.holdFrame)\n\n        self.offsetFrame = self.frame_widget('ofs')\n        # self.offsetFrame = QSpinBox()\n        # self.offsetFrame.setButtonSymbols(QAbstractSpinBox.NoButtons)\n        # self.offsetFrame.setMinimumHeight(20)\n        # self.offsetFrame.setMinimum(-999999)\n        # self.offsetFrame.setMaximum(999999)\n        # self.offsetFrame.setStyleSheet('border:none;text-align: center;')\n        self.offsetFrame.valueChanged.connect(self.changeValue)\n        self.ly.addWidget(self.offsetFrame)\n\n        self.ofs, self.hld, self.sw = self.getNodes()\n\n        self.switchMode()\n\n        self.initUI()\n\n    def frame_widget(self, type):\n        if not self.use_slider:\n            wd = QSpinBox()\n            wd.setButtonSymbols(QAbstractSpinBox.NoButtons)\n            wd.setMinimumHeight(20)\n            wd.setMinimum(-999999)\n            wd.setMaximum(999999)\n            wd.setStyleSheet('border:none;text-align: center;')\n            return wd\n        else:\n            wd = bricker_FrameWidget(type, self.node)\n            return wd\n\n    def initUI(self):\n        d = self.loadSettingKnob()\n        if d:\n            self.switcher.setChecked(d.get('mode', False))\n            self.holdFrame.setValue(d.get('frm', 0))\n            self.offsetFrame.setValue(d.get('ofs', 0))\n            self.updateNode()\n\n    def switchMode(self):\n        if not self.hld or not self.ofs:\n            return\n        if not self.switcher.isChecked():\n            self.switcher.setText(pwbr_offsetFrameLabel)\n            self.holdFrame.setVisible(0)\n            self.offsetFrame.setVisible(1)\n\n            self.offsetFrame.setValue(self.ofs\['offset'].getValue())\n        else:\n            if QApplication.keyboardModifiers() == Qt.ControlModifier:\n                frame = self.get_current_frame()\n                if not frame is None:\n                    self.holdFrame.setValue(frame)\n            self.switcher.setText(pwbr_setFrameLabel)\n            self.holdFrame.setVisible(self.hld\['first_frame'].getValue())\n            self.offsetFrame.setVisible(0)\n            self.holdFrame.setVisible(1)\n        self.updateNode()\n\n    def get_current_frame(self):\n        self.main.begin()\n        i = nuke.allNodes('Input')\[self.inp]\n        node = None\n        for x in i.dependent()\[0].dependent():\n            if x.Class() == 'TimeOffset':\n                node = x\n                break\n        self.main.end()\n        k = node.knob('finalframe')\n        if k:\n            return k.getValue()\n\n    def changeValue(self, i):\n        self.updateNode()\n\n    def getNodes(self):\n        self.main.begin()\n        inputs = nuke.allNodes('Input')\n        inputs = sorted(inputs, key=lambda x: int(x.name()\[5:]))\n        i = inputs\[self.inp]\n        ofs = find_node(i, 'TimeOffset')\n        hld = find_node(i, 'FrameHold')\n        sw = None\n        if ofs:\n            sw = \[x for x in ofs.dependent() if x.Class() == 'Switch']\n            if sw:\n                sw = sw\[0]\n        self.main.end()\n        if ofs:\n            self.offsetFrame.setValue(ofs\['offset'].getValue())\n        if hld:\n            self.holdFrame.setValue(hld\['first_frame'].getValue())\n        if sw:\n            if sw\['which'].getValue() == 0:  # offset\n                self.switcher.setText(pwbr_offsetFrameLabel)\n                self.switcher.setChecked(0)\n                self.holdFrame.setVisible(0)\n                self.offsetFrame.setVisible(1)\n            else:  # hold\n                self.switcher.setText(pwbr_setFrameLabel)\n                self.switcher.setChecked(1)\n                self.holdFrame.setVisible(1)\n                self.offsetFrame.setVisible(0)\n        return ofs, hld, sw\n\n    def updateNode(self):\n        if self.ofs:\n            self.ofs\['offset'].setValue(self.offsetFrame.value())\n        if self.hld:\n            self.hld\['first_frame'].setValue(self.holdFrame.value())\n        if self.sw:\n            self.sw\['which'].setValue(int(self.switcher.isChecked()))\n        self.saveSettingKnob()\n\n    def loadSettingKnob(self):\n        return bricker_loadSettingKnob(self.node)\n\n    def saveSettingKnob(self):\n        d = dict(mode=self.switcher.isChecked(),\n                 ofs=self.offsetFrame.value(),\n                 frm=self.holdFrame.value()\n                 )\n        bricker_saveSettingKnob(self.node, d)\n\n\nclass bricker_FrameSlider(QSlider):\n    handle_width = 10\n    slider_style = '''\n    QSlider::groove:horizontal \{\n        border: 1px solid #000;\n        background: #000;\n        height: 3px;\n        border-radius: 0px;\n    \}\n    QSlider::sub-page:horizontal \{\n        background:  #404040;\n        border: 1px solid #000;\n        height: 10px;\n        border-radius: 0px;\n    \}\n    QSlider::add-page:horizontal \{\n        background: #404040;\n        border: 1px solid #000;\n        height: 10px;\n        border-radius: 0px;\n    \}\n        QSlider::handle:horizontal \{\n        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,   stop:0 #696969, stop:1 #505050);\n        border: 1px solid #000;\n        width: %spx;\n        margin-top: -8px;\n        margin-bottom: -8px;\n        border-radius: 0px;\n    \}\n        QSlider::hover\n    \{\n        background: #3f3f3f;\n    \}\n    ''' % handle_width\n\n    def __init__(self, type, node, *args, **kwargs):\n        super(bricker_FrameSlider, self).__init__(*args, **kwargs)\n        self.setMinimumHeight(25)\n        self.setMinimumWidth(100)\n        self.setSingleStep(1)\n        self.setPageStep(1)\n        # self.setStyleSheet(self.slider_style)\n        self._min = -100\n        self._max = 100\n        self._set_max = None\n        self._set_min = None\n        if type == 'ofs':\n            self.valueChanged.connect(self.soft_range)\n        else:\n            if isinstance(node, list):\n                self._min = node\[0]\n                self._max = node\[1]\n            else:\n                if isinstance(node, list):\n                    self._min = node\[0]\n                    self._max = node\[1]\n                else:\n                    self._min = node.firstFrame()\n                    self._max = node.lastFrame()\n\n        self.setMinimum(self._min)\n        self.setMaximum(self._max)\n\n    def soft_range(self, v):\n        sz = max(int(abs(self._max - self._min) * 0.1), 3)\n        if v < self._min + sz:\n            self._min = self._min - (abs(self._max - self._min)/2)\n            self._set_min = self._min\n        if v > self._max - sz:\n            self._max = self._max + (abs(self._max - self._min)/2)\n            self._set_max = self._max\n\n    def mousePressEvent(self, event):\n        if event.button() == Qt.LeftButton:\n            # handle_pos = self.setRange(self.value(), self.minimum(), self.maximum(), 0, self.width())\n            # click_x = event.x()\n            # if not (click_x < handle_pos-(self.handle_width/2) and click_x > handle_pos+(self.handle_width/2)):\n            #     print 'move'\n            self.setValue(self.minimum() + ((self.maximum() - self.minimum()) * event.x()) / self.width() )\n        super(bricker_FrameSlider, self).mousePressEvent(event)\n\n    def mouseMoveEvent(self, event):\n        if event.button() == Qt.LeftButton:\n            self.setValue(self.minimum() + ((self.maximum() - self.minimum()) * event.x()) / self.width())\n        super(bricker_FrameSlider, self).mouseMoveEvent(event)\n\n    def mouseReleaseEvent(self, event):\n        if self._set_min:\n            self.setMinimum(self._set_min)\n            self._set_min = None\n        if self._set_max:\n            self.setMaximum(self._set_max)\n            self._set_max = None\n\n        super(bricker_FrameSlider, self).mouseReleaseEvent(event)\n\n    def setValue(self, v):\n        if v < self.minimum():\n            self.setMinimum(v - 50)\n        if v > self.maximum():\n            self.setMaximum(v + 50)\n        super(bricker_FrameSlider, self).setValue(v)\n\n    @staticmethod\n    def setRange(x=0.0, oldmin=0.0, oldmax=1.0, newmin=0.0, newmax=1.0):\n        if oldmin < oldmax:\n            realoldmin = oldmin\n            realoldmax = oldmax\n            realnewmin = newmin\n            realnewmax = newmax\n        elif oldmin > oldmax:\n            realoldmin = oldmax\n            realoldmax = oldmin\n            realnewmin = newmax\n            realnewmax = newmin\n        else:\n            return x\n        if x < realoldmin:\n            result = realnewmin\n        elif x > realoldmax:\n            result = realnewmax\n        else:\n            result = (realnewmin + (realnewmax - realnewmin) * (x - oldmin) / (oldmax - oldmin))\n        return result\n\n\nclass bricker_FrameWidget(QWidget):\n    valueChanged = Signal(int)\n\n    def __init__(self, type, node, *args, **kwargs):\n        super(bricker_FrameWidget, self).__init__(*args, **kwargs)\n        self.setWindowFlags(Qt.Window)\n        self.setMinimumHeight(20)\n        self.setMinimumWidth(100)\n        self.ly = QHBoxLayout()\n        self.setLayout(self.ly)\n        self.setContentsMargins(0, 0, 0, 0)\n        self.sld = bricker_FrameSlider(type, node, Qt.Horizontal)\n        self.sld.setSingleStep(1)\n        self.sld.setPageStep(1)\n        self.sld.valueChanged.connect(self.value_changed)\n\n        self.spb = QSpinBox()\n        self.spb.setButtonSymbols(QAbstractSpinBox.NoButtons)\n        self.spb.setMinimumHeight(20)\n        self.spb.setMinimum(-999999)\n        self.spb.setMaximum(999999)\n        self.spb.valueChanged.connect(self.value_changed)\n\n        self.setLayout(self.ly)\n        self.ly.addWidget(self.sld)\n        self.ly.addWidget(self.spb)\n\n    def value_changed(self, v):\n        if self.sender() == self.sld:\n            self.spb.blockSignals(1)\n            self.spb.setValue(v)\n            self.spb.blockSignals(0)\n        elif self.sender() == self.spb:\n            self.sld.blockSignals(1)\n            self.sld.setValue(v)\n            self.sld.blockSignals(0)\n        self.valueChanged.emit(v)\n\n    def setValue(self, v):\n        self.spb.blockSignals(1)\n        self.spb.setValue(v)\n        self.spb.blockSignals(0)\n        self.sld.blockSignals(1)\n        self.sld.setValue(v)\n        self.sld.blockSignals(0)\n\n    def value(self):\n        return self.sld.value()\n\n\nclass bricker_layerListClass(QComboBox):\n    def __init__(self, node, inp, mainNode, channels, saved, parent):\n        super(bricker_layerListClass, self).__init__(parent)\n        self.main = mainNode\n        self.imgNode = self.main.input(inp)\n        self.node = node\n        if channels:\n            self.addItems(channels)\n        else:\n            self.setEnabled(0)\n        self.sfl = self.get_node(mainNode, inp)\n        if self.sfl:\n            layer = self.sfl\['in'].value()\n            index = self.findText(layer)\n            if index > 0:\n                self.setCurrentIndex(index)\n        self.currentIndexChanged.connect(self.set_layer)\n\n    def set_layer(self):\n        self.sfl\['in'].setValue(self.currentText())\n        bricker_saveSettingKnob(self.imgNode, \{'layer': self.currentText()\})\n\n    def get_node(self, main, inp):\n        main.begin()\n        inputs = nuke.allNodes('Input')\n        inputs = sorted(inputs, key=lambda x: int(x.name()\[5:]))\n        i = inputs\[inp]\n        main.end()\n        return find_node(i, 'Shuffle')\n\ndef getMainWindow():\n    qApp = QApplication.instance()\n    for widget in qApp.topLevelWidgets():\n        if widget.metaObject().className() == 'Foundry::UI::DockMainWindow':\n            return widget\n\nif __name__ == '__main__':\n    # gizmo mode\n    bricker_install()\nelse:\n    # test mode\n    __import__('__main__').__dict__\['bricker_actions_menu'] = bricker_actions_menu\n\n\n#################### load other knobs ######\n\nexec nuke.thisNode().knob('editexprwindow').value()\n\n#################### FIX CALLBACK ERRORS\n\nfrom nuke import callbacks\n\n\ndef _doCallbacks(dict, node=None):\n    list = dict.get(nuke.thisClass())\n    node = nuke.thisNode()\n    if list:\n        for f in list:\n            if f\[3] == None or f\[3] is node:\n                f\[0](*f\[1], **f\[2])\n    list = dict.get('*')\n    if list:\n        try:\n            for f in list:\n                if f\[3] == None or f\[3] is node:\n                    f\[0](*f\[1], **f\[2])\n        except:\n            pass\n\n\ncallbacks._doCallbacks = _doCallbacks\n\n" +STARTLINE}
+ addUserKnob {26 error l ERROR T "<b style=\"color:red;font-size:12px;\">Bricker not installed!</b>"}
+ addUserKnob {22 howto l "<b style=\"color:orange;font-size:10px;\">&nbsp;&nbsp;&nbsp;&nbsp;How to install?&nbsp;&nbsp;&nbsp;&nbsp;</b>" -STARTLINE T "nuke.thisNode()\['show_help'].execute()"}
+ addUserKnob {26 brickedknobinfo l "" t "import nuke\n\nnuke.addKnobChanged(brickerGroupChanged)\nnuke.removeKnobChanged(brickerGroupChanged)\n\ndef brickerGroupChanged():\n    n = nuke.thisNode()\n    if n.knob('brickedknobinfo'):\n        text = n\['rebuild'].value()\n        fakeNS = \{\}\n        exec text in fakeNS\n        fakeNS\['execute'](nuke.thisKnob())\n            \n        " +STARTLINE T "Not connected"}
+ addUserKnob {22 rebuild l Rebuild +STARTLINE}
+ addUserKnob {22 actions l Actions... -STARTLINE T bricker_actions_menu(nuke.thisNode())}
+ addUserKnob {22 discon l INVISIBLE +INVISIBLE T bricker_disconnect() +STARTLINE}
+ addUserKnob {22 connectsel l INVISIBLE -STARTLINE +INVISIBLE T bricker_connectSelected()}
+ addUserKnob {22 remdup l INVISIBLE -STARTLINE +INVISIBLE T bricker_remove_duplicates()}
+ addUserKnob {22 show_help l Help -STARTLINE T "from PySide.QtCore import *\nfrom PySide.QtGui import *\nimport webbrowser\nclass BrickerHelpDialog(QWidget):\n    def __init__(self):\n        super(BrickerHelpDialog, self).__init__(getMainWindow())\n        self.ly = QVBoxLayout()\n        self.setLayout(self.ly)\n        self.setWindowFlags(Qt.Tool)\n        self.setWindowTitle('pw Bricker Help')\n        self.text = QTextBrowser()\n        def ss(text):\n            webbrowser.open(text.toString())\n        self.text.setSource = ss\n        self.ly.addWidget(self.text)\n\n        if not 'brickerExistsVar' in __import__('__main__').__dict__:\n            warn = '<h2><b style=\"color:red\" >Bricker not installed!</b></h2>'\n        else:\n            warn=''\n\n\n        self.text.setHtml(html.format(warn=warn))\n\n        self.resize(570, 430)\n\n\n\n\nhtml = '''\{warn\}<h1>Bricker Gizmo</h1>\n<h3>by paulwinex 2017</h3>\n<a style=\"color: darkgray;\" href=\"http://paulwinex.com\">www.paulwinex.com</a>\n<h2><a style=\"color: darkgray;\" href=\" http://paulwinex.com/nuke-bricker/\">Open Manual</a></h2>\n<hr>\n<div>\n<h2>Install</h2>\n  <ol>\n    <li>Copy pw_bricker.gizmo and bricker.png to the Nuke Plugin Path</li>\n    <li>Add this code to \"menu.py\" and restart Nuke:</li>\n  </ol>\n<div style=\"border: solid 1px\">\n<hr>\n<code>\nimport nuke<br>\ntoolbar = nuke.toolbar(\"Nodes\")<br>\ntoolbar.addCommand( \"Merge/Bricker\", \"nuke.createNode('pw_bricker')\", icon=\"bricker.png\")<br>\ndef install_bricker():<br>\n&nbsp;&nbsp;&nbsp;&nbsp;nuke.thisNode()\['mainScript'].execute()<br>\n&nbsp;&nbsp;&nbsp;&nbsp;nuke.removeOnCreate(install_bricker, nodeClass='pw_bricker')<br>\nnuke.addOnCreate(install_bricker, nodeClass='pw_bricker')<br>\n#fix overlay action<br>\nnuke.menu('Viewer').items()\[1].action().setChecked(True)\n</code>\n</div>\n<hr>\n<h2>Regex Helper</h2>\n<b><a style=\"color: darkgray;\" href=\"http://www.exlab.net/files/tools/sheets/regexp/regexp.png\">RUS</a></b> or <b><a style=\"color: darkgray;\" href=\"http://www.cheat-sheets.org/saved-copy/regular_expressions_cheat_sheet.png\">ENG</a></b>\n'''\ndef getMainWindow():\n    qApp = QApplication.instance()\n    for widget in qApp.topLevelWidgets():\n        if widget.metaObject().className() == 'Foundry::UI::DockMainWindow':\n            return widget\n\nw = BrickerHelpDialog()\nw.show()\t"}
+ addUserKnob {6 auto l "Auto update" +STARTLINE}
+ auto true
+ addUserKnob {26 imginfo l Image}
+ addUserKnob {4 imagewidth l "Output Width" M {"1k  " "2k  " "3k   " 4k 5k 6k 7k 8k 9k 10k "" "" ""}}
+ imagewidth "3k   "
+ addUserKnob {4 colcount l "Column Count" M {Auto 1 2 3 4 5 6 7 8 9 10 "" ""}}
+ addUserKnob {7 pixelaspect l "Source Pixel Aspect" R 0.5 2}
+ pixelaspect 1
+ addUserKnob {20 text l Font}
+ addUserKnob {7 fontsize l "Font Size" R 1 150}
+ fontsize 40
+ addUserKnob {7 fontoffset l "Font Offset" R 0 100}
+ fontoffset 25
+ addUserKnob {2 font_win l Windows}
+ font_win C:/Windows/Fonts/arial.ttf
+ addUserKnob {2 font_mac l Mac}
+ font_mac /Library/Fonts/Arial.ttf
+ addUserKnob {2 font_lin l Linux}
+ font_lin /usr/share/fonts/truetype/freefont/FreeSans.ttf
+ addUserKnob {20 labels l Labels}
+ addUserKnob {6 overlay l Overlay +STARTLINE}
+ overlay true
+ addUserKnob {4 horiz l "" -STARTLINE M {"Align Left" "Align Center" "Aligh Right" "" ""}}
+ addUserKnob {6 show_shot l "Extract Name" +STARTLINE}
+ addUserKnob {22 editexpr l Edit... -STARTLINE T "bricker_edit_expression_dialog = BrickerEditRegexDialog(nuke.thisNode())\nbricker_edit_expression_dialog.show()"}
+ addUserKnob {22 editexprwindow l INVISIBLE -STARTLINE +INVISIBLE T "from PySide.QtCore import *\nfrom PySide.QtGui import *\nimport nuke\nimport json, os, re, base64, copy\n\n\nclass BrickerEditRegexDialog(QWidget):\n    def __init__(self, node=None):\n        super(BrickerEditRegexDialog, self).__init__(getMainWindow())\n        self.node = node\n        self.build_ui()\n        self.setMaximumWidth(800)\n        self.setWindowFlags(Qt.Tool)\n        if self.node:\n            self.setWindowTitle('Edit extract expression (%s)' % node.name())\n        else:\n            self.setWindowTitle('Edit extract expression')\n        self.expression_te.setWordWrapMode(QTextOption.NoWrap)\n        metrics = QFontMetrics(self.font())\n        self.expression_te.setTabStopWidth(4 * metrics.width(' '))\n\n        self.help_btn.clicked.connect(self.help)\n        self.preset_btn.clicked.connect(self.presets_menu)\n        self.python_rb.clicked.connect(self.update_ui)\n        self.tcl_rb.clicked.connect(self.update_ui)\n        self.regex_rb.clicked.connect(self.update_ui)\n        self.expression_te.textChanged.connect(self.compute_test)\n        # self.test_input_le.textChanged.connect(self.compute_test)\n        self.group_spb.valueChanged.connect(self.compute_test)\n        self.save_btn.clicked.connect(self.save_to_node)\n        self.help_btn.hide()\n        self.load_from_node()\n\n    def _read_ui(self):\n        expression = self.expression_te.toPlainText()\n        if not expression:\n            return\n        lang = 'py' if self.python_rb.isChecked() else (\n            'tcl' if self.tcl_rb.isChecked() else 're'\n        )\n        data = dict(\n            expr=expression,\n            lang=lang\n        )\n        if lang == 're':\n            data\['expr'] = data\['expr'].replace('\\\\', '\\\\\\\\')\n            data\['group'] = self.group_spb.value()\n        return data\n\n    def dumps(self):\n        data = self._read_ui()\n        if data:\n            return base64.encodestring(json.dumps(data))\n\n    @staticmethod\n    def loads(node):\n        k = node.knob('extractexpr')\n        if k:\n            v = k.getValue()\n            if not v:\n                return\n            try:\n                data = json.loads(base64.decodestring(v))\n                return data\n            except Exception as e:\n                print 'ERROR:', str(e), v\n                k.setValue('')\n                return\n\n    def load_from_node(self):\n        data = self.loads(self.node) or \{\}\n        self.apply_preset(data)\n\n    def save_to_node(self):\n        data = self.dumps()\n        if data:\n            self.node.knob('extractexpr').setValue(data)\n        else:\n            self.node.knob('extractexpr').setValue('')\n\n    def apply_preset(self, data):\n        self.expression_te.setPlainText(data.get('expr', ''))\n        if data.get('lang') == 'py':\n            self.python_rb.setChecked(1)\n        elif data.get('lang') == 're':\n            data\['expr'] = data\['expr'].replace('\\\\\\\\', '\\\\')\n            self.regex_rb.setChecked(1)\n            self.group_spb.setValue(data.get('group', 0))\n        elif data.get('lang') == 'tcl':\n            self.tcl_rb.setChecked(1)\n        self.update_ui()\n\n    def update_ui(self):\n        if self.regex_rb.isChecked():\n            self.help_lb.setText('Using \"file\" knob from input node')\n            self.tst_wd.show()\n        elif self.tcl_rb.isChecked():\n            self.tst_wd.hide()\n            self.help_lb.setText('Use \"thisNode\" as current input node in cycle')\n        else:\n            self.help_lb.setText('Use \"thisNode\" as current input Python node in cycle')\n            self.tst_wd.hide()\n        self.compute_test()\n\n    def compute_test(self):\n        data = self._read_ui()\n        error = None\n        result = None\n        node = None\n        if not data:\n            return\n        if not data\['expr']:\n            self.result_le.setText('')\n            return\n        if self.node.inputs():\n            nodes = \[self.node.input(x) for x in range(self.node.inputs())]\n            node = (\[x for x in nodes if x] or \[None])\[0]\n            if not node:\n                error = 'no input nodes'\n        else:\n            error = 'no input nodes'\n        if not error and node:\n            result, error = self.evaluate_expression(data\['lang'],\n                                                     data\['expr'],\n                                                     node,\n                                                     data.get('group'))\n\n        if result:\n            self.result_le.setText(self.__split_message(str(result)))\n        else:\n            self.result_le.setText('')\n        if error:\n            self.result_le.setText('ERROR: %s' % self.__split_message(str(error)))\n\n    @staticmethod\n    def evaluate_expression(lang, expr, node, regex_group=None):\n        res = None\n        err = None\n\n        if lang == 'py':\n            expr = expr.strip().replace('thisNode', 'nuke.toNode(\"%s\")' % node.fullName())\n            f = r'''\\\ndef _pyfunc():\n\{\}\n_result = _pyfunc()\n'''\n            ns = dict(\n                nuke=nuke,\n                os=os,\n                re=re\n            )\n            if len(expr.split('\\n')) == 1:\n                expr = 'return '+expr\n            else:\n                if 'return' not in expr:\n                    err = 'you should return value from multi line expression'\n            func = f.format(\n                ''.join(\['    ' + x + '\\n' for x in expr.split('\\n')])\n            )\n            try:\n                exec func in ns\n                res = ns\['_result']\n            except Exception as e:\n                err = str(e)\n\n        elif lang == 're':\n            test_line = None\n            k = node.knob('file')\n            if not k:\n                err = 'knob \"file\" not found'\n            else:\n                test_line = k.evaluate()\n            if not err and test_line is not None:\n                try:\n                    m = re.match(expr.replace('\\\\\\\\', '\\\\'), test_line)\n                    if m:\n                        if not regex_group is None:\n                            try:\n                                res = m.group(regex_group)\n                            except Exception as e:\n                                err = str(e)\n                        else:\n                            res = m.group(0)\n                    else:\n                        m = re.findall(expr.replace('\\\\\\\\', '\\\\'), test_line)\n                        if m:\n                            res = m\[0]\n                        else:\n                            err = 'no match'\n                except Exception as e:\n                    err = str(e)\n\n        elif lang == 'tcl':\n            exp = expr.replace('thisNode', node.fullName()) \\\n                .replace('\\n', ' ')\n            try:\n                res = nuke.tcl(str(exp))\n            except Exception as e:\n                err = str(e)\n        return res, err\n\n    def __split_message(self, msg):\n        maxlen = 200\n        if len(msg) > maxlen:\n            return str(msg)\[:200] + '...'\n        else:\n            return msg\n\n    def get_presets(self):\n        dp = copy.deepcopy(default_presets)\n        f = self.presets_folder()\n        if f:\n            for file in os.listdir(f):\n                full = os.path.join(f, file)\n                if os.path.isfile(full):\n                    try:\n                        pr = json.load(open(full))\n                    except:\n                        continue\n                    if pr.get('lang') == 're':\n                        dp\['regex'].append(pr)\n                    elif pr.get('lang') == 'py':\n                        dp\['python'].append(pr)\n                    else:\n                        dp\['tcl'].append(pr)\n        return dp\n\n    def presets_menu(self):\n        presets = self.get_presets()\n        menu = QMenu()\n        regmenu = QMenu('Regex')\n        menu.addMenu(regmenu)\n        tclmenu = QMenu('TCL')\n        menu.addMenu(tclmenu)\n        pymenu = QMenu('Python')\n        menu.addMenu(pymenu)\n        menu.addSeparator()\n        menu.addAction(QAction('Save current as...', self, triggered=self.save_current_preset))\n        menu.addAction(QAction('Open presets folder...', self, triggered=self.open_preset_folder))\n\n        if presets.get('regex'):\n            for p in presets.get('regex'):\n                p\['lang'] = 're'\n                regmenu.addAction(QAction(p\['title'], self, triggered=lambda x=p: self.apply_preset(x)))\n        else:\n            act = QAction('Empty', self)\n            act.setEnabled(0)\n            regmenu.addAction(act)\n\n        if presets.get('tcl'):\n            for p in presets.get('tcl'):\n                p\['lang'] = 'tcl'\n                tclmenu.addAction(QAction(p\['title'], self, triggered=lambda x=p: self.apply_preset(x)))\n        else:\n            act = QAction('Empty', self)\n            act.setEnabled(0)\n            tclmenu.addAction(act)\n\n        if presets.get('python'):\n            for p in presets.get('python'):\n                p\['lang'] = 'py'\n                pymenu.addAction(QAction(p\['title'], self, triggered=lambda x=p: self.apply_preset(x)))\n        else:\n            act = QAction('Empty', self)\n            act.setEnabled(0)\n            pymenu.addAction(act)\n        menu.exec_(QCursor.pos())\n\n    def help(self):\n        print 'HELP'\n\n    def build_ui(self):\n        self.ly1 = QVBoxLayout(self)\n        self.groupBox_3 = QGroupBox(self)\n        self.ly2 = QVBoxLayout(self.groupBox_3)\n        self.ly3 = QHBoxLayout()\n        self.regex_rb = QRadioButton('Regex')\n        self.regex_rb.setChecked(True)\n        self.ly3.addWidget(self.regex_rb)\n        self.tcl_rb = QRadioButton('TCL')\n        self.ly3.addWidget(self.tcl_rb)\n        self.python_rb = QRadioButton('Python')\n        self.ly3.addWidget(self.python_rb)\n        spacerItem = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)\n        self.ly3.addItem(spacerItem)\n        self.preset_btn = QPushButton('Presets')\n        self.preset_btn.setMaximumSize(QSize(50, 16777215))\n        self.ly3.addWidget(self.preset_btn)\n        self.help_btn = QPushButton('?')\n        self.help_btn.setMaximumSize(QSize(20, 16777215))\n        self.ly3.addWidget(self.help_btn)\n        self.ly2.addLayout(self.ly3)\n        self.help_lb = QLabel()\n        self.ly2.addWidget(self.help_lb)\n        self.expression_te = QPlainTextEdit(self.groupBox_3)\n        self.ly2.addWidget(self.expression_te)\n        self.grp_wd = QWidget(self.groupBox_3)\n        self.ly2.addWidget(self.grp_wd)\n        self.ly1.addWidget(self.groupBox_3)\n\n        self.groupBox = QGroupBox(self)\n        self.groupBox.setTitle(\"Result\")\n        self.ly5 = QVBoxLayout(self.groupBox)\n        self.ly6 = QHBoxLayout()\n        self.tst_wd = QWidget()\n        tst_ly = QHBoxLayout()\n        tst_ly.setContentsMargins(0,0,0,0)\n        self.tst_wd.setLayout(tst_ly)\n        # self.test_input_le = QLineEdit(self.groupBox)\n        # self.test_input_le.setPlaceholderText('Regex test string')\n        # tst_ly.addWidget(self.test_input_le)\n        label = QLabel('Regex Group')\n        tst_ly.addWidget(label)\n        self.group_spb = QSpinBox(self.groupBox)\n        tst_ly.addWidget(self.group_spb)\n        spacerItem = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)\n        tst_ly.addItem(spacerItem)\n\n        self.ly5.addWidget(self.tst_wd)\n\n        self.result_le = QLabel(self.groupBox)\n        self.result_le.setText(\"\")\n        self.ly5.addWidget(self.result_le)\n        self.ly1.addWidget(self.groupBox)\n        self.save_btn = QPushButton('Save')\n        self.ly1.addWidget(self.save_btn)\n\n        self.groupBox_3.setTitle(\"Expression\")\n        self.resize(500, 400)\n\n        self.help_lb.setText('Using \"file\" knob from input node')\n\n    @classmethod\n    def presets_folder(cls):\n        f = os.path.expanduser('~/.pw_bricker_expression_presets')\n        if not os.path.exists(f):\n            try:\n                os.makedirs(f)\n            except:\n                return\n        return f\n\n    @staticmethod\n    def checkLegalChar(string):\n        return re.sub('\[^A-Za-z0-9]+', '_', string).lower()\n\n    def open_preset_folder(self):\n        f = self.presets_folder()\n        if not f:\n            QMessageBox.critical(self, 'Error', 'Cant create folder')\n            return\n        systems = \{\n            'nt': os.startfile,\n            'posix': lambda foldername: os.system('xdg-open \"%s\"' % foldername),\n            'os2': lambda foldername: os.system('open \"%s\"' % foldername)\n        \}\n        systems.get(os.name, os.startfile)(f)\n\n    def save_current_preset(self):\n        text, ok = QInputDialog.getText(self, 'Save Preset', 'Enter Preset Name')\n        if not ok:\n            return\n        name = self.checkLegalChar(text)\n        if len(set(name)) == 1:\n            QMessageBox.critical(self, 'Error', 'Wrong name')\n            return\n        folder = self.presets_folder()\n        if not folder:\n            QMessageBox.critical(self, 'Error', 'Cant get presets folder')\n            return\n        preset_file = os.path.join(folder, name+'.json')\n        if os.path.exists(preset_file):\n            QMessageBox.critical(self, 'Error', 'That name already exists')\n            return\n        data = dict(\n            lang='re' if self.regex_rb.isChecked() else ('tcl' if self.tcl_rb.isChecked() else 'py'),\n            expr=self.expression_te.toPlainText(),\n            title=text\n        )\n        try:\n            json.dump(data, open(preset_file, 'w'), indent=2)\n        except:\n            QMessageBox.critical(self, 'Error', \"Can't save preset\")\n\ndefault_presets = dict(\n    python=\[dict(\n                title='File Name',\n                expr=r\"os.path.basename(thisNode\['file'].evaluate())\"\n                ),\n            dict(\n                title='File Name (Deep search)',\n                expr=r\"\"\"def get_dep(node):\n    d = node.dependencies()\n    if len(d) == 1:\n        return d\[0]\nif thisNode.knob('file'):\n    return os.path.basename(thisNode.knob('file').evaluate())\nelse:\n    dep = get_dep(thisNode)\n    if dep.knob('file'):\n        return os.path.basename(dep.knob('file').evaluate())\n    while dep:\n        dep = get_dep(dep)\n        if not dep:\n            break\n        if dep.knob('file'):\n            return os.path.basename(dep.knob('file').evaluate())\n\"\"\"\n                ),\n\n    ],\n\n    tcl=\[dict(\n                title='File Name',\n                expr=r\"basename  \[value thisNode.file]\"\n                )\n    ],\n\n    regex=\[dict(\n                title='File name',\n                expr=r'.*?(\[a-zA-Z0-9%_]+).\\w\{3\}\$',\n                group=1\n                ),\n    ]\n)\n\n\ndef getMainWindow():\n    qApp = QApplication.instance()\n    for widget in qApp.topLevelWidgets():\n        if widget.metaObject().className() == 'Foundry::UI::DockMainWindow':\n            return widget\n\n# if nuke.thisKnob().name() == 'editexpr':\n#     bricker_edit_expression_dialog = BrickerEditRegexDialog(nuke.thisNode())\n#     bricker_edit_expression_dialog.show()\n\n"}
+ addUserKnob {1 extractexpr l INVISIBLE -STARTLINE +INVISIBLE}
+ addUserKnob {20 endGroup n -1}
+ addUserKnob {6 show_size l "Image Size" +STARTLINE}
+ addUserKnob {6 show_frame l Frame +STARTLINE}
+ show_frame true
+ addUserKnob {6 show_channel l "Show Current Channel" +STARTLINE}
+ addUserKnob {6 show_channels l Channels: +STARTLINE}
+ addUserKnob {1 chan_filter l Filter: -STARTLINE}
+ addUserKnob {22 clear_filter l clear -STARTLINE T "nuke.thisNode()\['chan_filter'].setValue('')"}
+ addUserKnob {6 timeline l "Timeline:     " +STARTLINE}
+ addUserKnob {18 timeline_color l "" -STARTLINE}
+ timeline_color {0 0.6 1}
+ addUserKnob {6 timeline_color_panelDropped l "panel dropped state" -STARTLINE +HIDDEN}
+ addUserKnob {20 tlgrp l "Timeline Size" n 1}
+ tlgrp 0
+ addUserKnob {3 tl_height l Height}
+ tl_height 40
+ addUserKnob {3 tl_offset l Offset}
+ tl_offset 30
+ addUserKnob {3 tl_border l Border}
+ tl_border 3
+ addUserKnob {20 endGroup_1 l endGroup n -1}
+ addUserKnob {6 select_bricks l "Select Bricks" +STARTLINE}
+ select_bricks true
+ addUserKnob {18 selection_color l "" -STARTLINE}
+ selection_color {1 0.7 0}
+ addUserKnob {6 selection_color_panelDropped l "panel dropped state" -STARTLINE +HIDDEN}
+}
+ Input {
+  inputs 0
+  name Input14
+  xpos 1323
+  ypos -674
+  number 13
+ }
+ Input {
+  inputs 0
+  name Input16
+  xpos 1523
+  ypos -674
+  number 15
+ }
+ Input {
+  inputs 0
+  name Input18
+  xpos 1723
+  ypos -674
+  number 17
+ }
+ Input {
+  inputs 0
+  name Input19
+  xpos 1823
+  ypos -674
+  number 18
+ }
+ Input {
+  inputs 0
+  name Input20
+  xpos 1923
+  ypos -674
+  number 19
+ }
+ Input {
+  inputs 0
+  name Input21
+  xpos 2023
+  ypos -674
+  number 20
+ }
+ Input {
+  inputs 0
+  name Input22
+  xpos 2123
+  ypos -674
+  number 21
+ }
+ Input {
+  inputs 0
+  name Input23
+  xpos 2223
+  ypos -674
+  number 22
+ }
+ Input {
+  inputs 0
+  name Input24
+  xpos 2323
+  ypos -674
+  number 23
+ }
+ Input {
+  inputs 0
+  name Input25
+  xpos 2423
+  ypos -674
+  number 24
+ }
+ Input {
+  inputs 0
+  name Input26
+  xpos 2523
+  ypos -674
+  number 25
+ }
+ Input {
+  inputs 0
+  name Input27
+  xpos 2623
+  ypos -674
+  number 26
+ }
+ Input {
+  inputs 0
+  name Input28
+  xpos 2723
+  ypos -674
+  number 27
+ }
+ Input {
+  inputs 0
+  name Input29
+  xpos 2823
+  ypos -674
+  number 28
+ }
+ Input {
+  inputs 0
+  name Input30
+  xpos 2923
+  ypos -674
+  number 29
+ }
+ Input {
+  inputs 0
+  name Input31
+  xpos 3023
+  ypos -674
+  number 30
+ }
+ Input {
+  inputs 0
+  name Input32
+  xpos 3123
+  ypos -674
+  number 31
+ }
+ Input {
+  inputs 0
+  name Input33
+  xpos 3223
+  ypos -674
+  number 32
+ }
+ Input {
+  inputs 0
+  name Input34
+  xpos 3323
+  ypos -674
+  number 33
+ }
+ Input {
+  inputs 0
+  name Input35
+  xpos 3423
+  ypos -674
+  number 34
+ }
+ Input {
+  inputs 0
+  name Input36
+  xpos 3523
+  ypos -674
+  number 35
+ }
+ Input {
+  inputs 0
+  name Input37
+  xpos 3623
+  ypos -674
+  number 36
+ }
+ Input {
+  inputs 0
+  name Input38
+  xpos 3723
+  ypos -674
+  number 37
+ }
+ Input {
+  inputs 0
+  name Input39
+  xpos 3823
+  ypos -674
+  number 38
+ }
+ Input {
+  inputs 0
+  name Input40
+  xpos 3923
+  ypos -674
+  number 39
+ }
+ Input {
+  inputs 0
+  name Input41
+  xpos 4023
+  ypos -674
+  number 40
+ }
+ Input {
+  inputs 0
+  name Input42
+  xpos 4123
+  ypos -674
+  number 41
+ }
+ Input {
+  inputs 0
+  name Input43
+  xpos 4223
+  ypos -674
+  number 42
+ }
+ Input {
+  inputs 0
+  name Input44
+  xpos 4323
+  ypos -674
+  number 43
+ }
+ Input {
+  inputs 0
+  name Input45
+  xpos 4423
+  ypos -674
+  number 44
+ }
+ Input {
+  inputs 0
+  name Input46
+  xpos 4523
+  ypos -674
+  number 45
+ }
+ Input {
+  inputs 0
+  name Input47
+  xpos 4623
+  ypos -674
+  number 46
+ }
+ Input {
+  inputs 0
+  name Input48
+  xpos 4723
+  ypos -674
+  number 47
+ }
+ Input {
+  inputs 0
+  name Input49
+  xpos 4823
+  ypos -674
+  number 48
+ }
+ Input {
+  inputs 0
+  name Input50
+  xpos 4923
+  ypos -674
+  number 49
+ }
+ Input {
+  inputs 0
+  name Input51
+  xpos 5023
+  ypos -674
+  number 50
+ }
+ Input {
+  inputs 0
+  name Input52
+  xpos 5123
+  ypos -674
+  number 51
+ }
+ Input {
+  inputs 0
+  name Input53
+  xpos 5223
+  ypos -674
+  number 52
+ }
+ Input {
+  inputs 0
+  name Input54
+  xpos 5323
+  ypos -674
+  number 53
+ }
+ Input {
+  inputs 0
+  name Input55
+  xpos 5423
+  ypos -674
+  number 54
+ }
+ Input {
+  inputs 0
+  name Input56
+  xpos 5523
+  ypos -674
+  number 55
+ }
+ Input {
+  inputs 0
+  name Input57
+  xpos 5623
+  ypos -674
+  number 56
+ }
+ Input {
+  inputs 0
+  name Input58
+  xpos 5723
+  ypos -674
+  number 57
+ }
+ Input {
+  inputs 0
+  name Input59
+  xpos 5823
+  ypos -674
+  number 58
+ }
+ Input {
+  inputs 0
+  name Input60
+  xpos 5923
+  ypos -674
+  number 59
+ }
+ Input {
+  inputs 0
+  name Input61
+  xpos 6023
+  ypos -674
+  number 60
+ }
+ Input {
+  inputs 0
+  name Input62
+  xpos 6123
+  ypos -674
+  number 61
+ }
+ Input {
+  inputs 0
+  name Input63
+  xpos 6223
+  ypos -674
+  number 62
+ }
+ Input {
+  inputs 0
+  name Input64
+  xpos 6323
+  ypos -674
+  number 63
+ }
+ Input {
+  inputs 0
+  name Input65
+  xpos 6423
+  ypos -674
+  number 64
+ }
+ Input {
+  inputs 0
+  name Input66
+  xpos 6523
+  ypos -674
+  number 65
+ }
+ Input {
+  inputs 0
+  name Input67
+  xpos 6623
+  ypos -674
+  number 66
+ }
+ Input {
+  inputs 0
+  name Input68
+  xpos 6723
+  ypos -674
+  number 67
+ }
+ Input {
+  inputs 0
+  name Input69
+  xpos 6823
+  ypos -674
+  number 68
+ }
+ Input {
+  inputs 0
+  name Input70
+  xpos 6923
+  ypos -674
+  number 69
+ }
+ Input {
+  inputs 0
+  name Input71
+  xpos 7023
+  ypos -674
+  number 70
+ }
+ Input {
+  inputs 0
+  name Input72
+  xpos 7123
+  ypos -674
+  number 71
+ }
+ Input {
+  inputs 0
+  name Input73
+  xpos 7223
+  ypos -674
+  number 72
+ }
+ Input {
+  inputs 0
+  name Input74
+  xpos 7323
+  ypos -674
+  number 73
+ }
+ Input {
+  inputs 0
+  name Input75
+  xpos 7423
+  ypos -674
+  number 74
+ }
+ Input {
+  inputs 0
+  name Input76
+  xpos 7523
+  ypos -674
+  number 75
+ }
+ Input {
+  inputs 0
+  name Input77
+  xpos 7623
+  ypos -674
+  number 76
+ }
+ Input {
+  inputs 0
+  name Input78
+  xpos 7723
+  ypos -674
+  number 77
+ }
+ Input {
+  inputs 0
+  name Input79
+  xpos 7823
+  ypos -674
+  number 78
+ }
+ Input {
+  inputs 0
+  name Input80
+  xpos 7923
+  ypos -674
+  number 79
+ }
+ Input {
+  inputs 0
+  name Input81
+  xpos 8023
+  ypos -674
+  number 80
+ }
+ Input {
+  inputs 0
+  name Input82
+  xpos 8123
+  ypos -674
+  number 81
+ }
+ Input {
+  inputs 0
+  name Input83
+  xpos 8223
+  ypos -674
+  number 82
+ }
+ Input {
+  inputs 0
+  name Input84
+  xpos 8323
+  ypos -674
+  number 83
+ }
+ Input {
+  inputs 0
+  name Input85
+  xpos 8423
+  ypos -674
+  number 84
+ }
+ Input {
+  inputs 0
+  name Input86
+  xpos 8523
+  ypos -674
+  number 85
+ }
+ Input {
+  inputs 0
+  name Input87
+  xpos 8623
+  ypos -674
+  number 86
+ }
+ Input {
+  inputs 0
+  name Input88
+  xpos 8723
+  ypos -674
+  number 87
+ }
+ Input {
+  inputs 0
+  name Input89
+  xpos 8823
+  ypos -674
+  number 88
+ }
+ Input {
+  inputs 0
+  name Input90
+  xpos 8923
+  ypos -674
+  number 89
+ }
+ Input {
+  inputs 0
+  name Input91
+  xpos 9023
+  ypos -674
+  number 90
+ }
+ Input {
+  inputs 0
+  name Input92
+  xpos 9123
+  ypos -674
+  number 91
+ }
+ Input {
+  inputs 0
+  name Input93
+  xpos 9223
+  ypos -674
+  number 92
+ }
+ Input {
+  inputs 0
+  name Input94
+  xpos 9323
+  ypos -674
+  number 93
+ }
+ Input {
+  inputs 0
+  name Input95
+  xpos 9423
+  ypos -674
+  number 94
+ }
+ Input {
+  inputs 0
+  name Input96
+  xpos 9523
+  ypos -674
+  number 95
+ }
+ Input {
+  inputs 0
+  name Input97
+  xpos 9623
+  ypos -674
+  number 96
+ }
+ Input {
+  inputs 0
+  name Input98
+  xpos 9723
+  ypos -674
+  number 97
+ }
+ Input {
+  inputs 0
+  name Input99
+  xpos 9823
+  ypos -674
+  number 98
+ }
+ Input {
+  inputs 0
+  name Input100
+  xpos 9923
+  ypos -674
+  number 99
+ }
+ Input {
+  inputs 0
+  name Input10
+  xpos 923
+  ypos -674
+  number 9
+ }
+ Input {
+  inputs 0
+  name Input17
+  xpos 1623
+  ypos -674
+  number 16
+ }
+ Input {
+  inputs 0
+  name Input15
+  xpos 1423
+  ypos -674
+  number 14
+ }
+ Input {
+  inputs 0
+  name Input13
+  xpos 1223
+  ypos -674
+  number 12
+ }
+ Input {
+  inputs 0
+  name Input12
+  xpos 1123
+  ypos -674
+  number 11
+ }
+ Input {
+  inputs 0
+  name Input11
+  xpos 1023
+  ypos -674
+  number 10
+ }
+ Input {
+  inputs 0
+  name Input9
+  xpos 823
+  ypos -674
+  number 8
+ }
+ Input {
+  inputs 0
+  name Input8
+  xpos 723
+  ypos -674
+  number 7
+ }
+ Input {
+  inputs 0
+  name Input7
+  xpos 623
+  ypos -674
+  number 6
+ }
+ Input {
+  inputs 0
+  name Input6
+  xpos 523
+  ypos -674
+  number 5
+ }
+ Input {
+  inputs 0
+  name Input5
+  xpos 423
+  ypos -674
+  number 4
+ }
+ Input {
+  inputs 0
+  name Input3
+  xpos 223
+  ypos -674
+  number 2
+ }
+ Input {
+  inputs 0
+  name Input4
+  xpos 323
+  ypos -674
+  number 3
+ }
+ Input {
+  inputs 0
+  name Input2
+  xpos 123
+  ypos -674
+  number 1
+ }
+ Input {
+  inputs 0
+  name Input1
+  xpos 23
+  ypos -674
+ }
+ Output {
+  inputs 0
+  name Output1
+  xpos 5
+  ypos 267
+ }
+end_group
