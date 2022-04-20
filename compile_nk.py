@@ -25,4 +25,4 @@ if os.path.exists(dst_script):
     os.remove(dst_script)
 nuke.scriptSaveAs(dst_script)
 print('Updated bricker script saved to: {}'.format(dst_script))
-print ('Now open the script in your Nuke and export the gizmo!')
+print('Now open the script in your Nuke and export the gizmo!')

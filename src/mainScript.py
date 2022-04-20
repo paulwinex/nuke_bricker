@@ -247,7 +247,7 @@ _result = _pyfunc()
             ''.join(['    ' + x + '\n' for x in expr.split('\n')])
         )
         try:
-            exec func in ns
+            exec(func, ns)
             res = ns['_result']
         except Exception as e:
             err = str(e)
@@ -1527,7 +1527,7 @@ else:
 
 #################### load other knobs ######
 
-exec nuke.thisNode().knob('editexprwindow').value()
+exec(nuke.thisNode().knob('editexprwindow').value())
 
 #################### FIX CALLBACK ERRORS
 
