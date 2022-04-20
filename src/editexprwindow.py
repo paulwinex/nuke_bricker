@@ -51,7 +51,7 @@ class BrickerEditRegexDialog(QWidget):
     def dumps(self):
         data = self._read_ui()
         if data:
-            return base64.encodestring(json.dumps(data))
+            return base64.encodebytes(json.dumps(data).encode()).decode()
 
     @staticmethod
     def loads(node):
@@ -61,7 +61,7 @@ class BrickerEditRegexDialog(QWidget):
             if not v:
                 return
             try:
-                data = json.loads(base64.decodestring(v))
+                data = json.loads(base64.decodebytes(v.encode()).decode())
                 return data
             except Exception as e:
                 print('ERROR:', str(e), v)
@@ -75,6 +75,8 @@ class BrickerEditRegexDialog(QWidget):
     def save_to_node(self):
         data = self.dumps()
         if data:
+            if isinstance(data, bytes):
+                data = data.decode()
             self.node.knob('extractexpr').setValue(data)
         else:
             self.node.knob('extractexpr').setValue('')
