@@ -219,7 +219,7 @@ def bricker_extract_name(node, bricker):
         return str(result)
     if error:
         nuke.tprint(error)
-        print error
+        print(error)
 
 
 def bricker_evaluate_expression(lang, expr, node, regex_group=None):
@@ -398,13 +398,13 @@ def overlay_menu_connect(on=True):
                 try:
                     a.triggered[bool].connect(overlay_menu_switcher)
                 except:
-                    print 'Not connected'
+                    print('Not connected')
         else:
             if a.receivers(SIGNAL("triggered()")) == 2:
                 try:
                     a.triggered[bool].disconnect(overlay_menu_switcher)
                 except:
-                    print 'Not disconnected'
+                    print('Not disconnected')
 
 
 def overlay_is_on():
@@ -1133,7 +1133,7 @@ class bricker_tabWidget(QWidget):
                 # self.table.blockSignals(0)
 
         else:
-            print 'ERROR REBUILD TABLE'
+            print('ERROR REBUILD TABLE')
 
     def getChannels(self, node):
         chan = node.channels()

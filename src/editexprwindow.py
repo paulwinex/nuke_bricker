@@ -64,7 +64,7 @@ class BrickerEditRegexDialog(QWidget):
                 data = json.loads(base64.decodestring(v))
                 return data
             except Exception as e:
-                print 'ERROR:', str(e), v
+                print('ERROR:', str(e), v)
                 k.setValue('')
                 return
 
@@ -159,7 +159,7 @@ _result = _pyfunc()
                 ''.join(['    ' + x + '\n' for x in expr.split('\n')])
             )
             try:
-                exec func in ns
+                exec(func, ns)
                 res = ns['_result']
             except Exception as e:
                 err = str(e)
@@ -268,7 +268,7 @@ _result = _pyfunc()
         menu.exec_(QCursor.pos())
 
     def help(self):
-        print 'HELP'
+        print('HELP!!!')
 
     def build_ui(self):
         self.ly1 = QVBoxLayout(self)
